@@ -1,0 +1,11 @@
+{
+  "domain": "grafana_image",
+  "name": "Grafana Image",
+  "codeowners": ["@phaser4"],
+  "config_flow": false,
+  "documentation": "https://github.com/phaser4/grafana-image",
+  "issue_tracker": "https://github.com/phaser4/grafana-image/issues",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}
