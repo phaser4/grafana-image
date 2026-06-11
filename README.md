@@ -1,54 +1,30 @@
 # Grafana Image
 
-Grafana Image is a Home Assistant custom integration plus Lovelace custom card for showing rendered Grafana panels as images inside a Home Assistant dashboard.
+Grafana Image is a Home Assistant custom integration and Lovelace custom card for showing a rendered Grafana panel as an image inside a Home Assistant dashboard.
 
-This repository currently contains the initial scaffold:
+The browser never calls Grafana directly. Instead, the Lovelace card requests the image from a Home Assistant backend endpoint, and Home Assistant proxies the request to Grafana. This keeps Grafana credentials server-side.
 
-- HACS metadata
-- Home Assistant custom component structure
-- a placeholder backend API surface
-- a placeholder frontend card resource
+## Requirements
 
-The full Grafana render proxy and image card behavior described in the project spec have not been implemented yet.
+- Home Assistant with support for custom integrations
+- Grafana reachable from the Home Assistant host or container
+- Grafana image rendering enabled and working
+- Either:
+  - a Grafana API token with access to the dashboard and panel, or
+  - anonymous Grafana access configured for the target dashboards
 
-## Planned Design
+## Installation With HACS
 
-The intended request flow is:
+1. Open HACS in Home Assistant.
+2. Add this repository as a custom repository:
+   - Repository: `https://github.com/phaser4/grafana-image`
+   - Category: `Integration`
+3. Install `Grafana Image`.
+4. Restart Home Assistant.
 
-```text
-Lovelace custom card
-    ->
-Home Assistant authenticated API endpoint
-    ->
-Grafana render API
-    ->
-PNG image returned to card
-```
+## Configuration
 
-The browser must not call Grafana directly and must not receive the Grafana API token.
-
-## Current State
-
-Implemented today:
-
-- repository structure for HACS and Home Assistant
-- `grafana_image` integration domain
-- YAML config schema for the planned backend settings
-- placeholder `/api/grafana_image/render` endpoint
-- static frontend endpoint for `grafana-image-card.js`
-- placeholder Lovelace custom card
-
-Not implemented yet:
-
-- Grafana render proxying
-- PNG response handling
-- backend caching
-- real card refresh behavior
-- frontend image rendering
-
-## Planned Configuration
-
-Example future `configuration.yaml`:
+Add the integration to `configuration.yaml`:
 
 ```yaml
 grafana_image:
@@ -58,7 +34,18 @@ grafana_image:
   timeout_seconds: 20
 ```
 
-## Planned Lovelace Resource
+### Options
+
+| Option | Required | Default | Description |
+| --- | --- | --- | --- |
+| `url` | yes | none | Base Grafana URL reachable from Home Assistant |
+| `api_token` | no | none | Bearer token for Grafana API access |
+| `cache_seconds` | no | `60` | In-memory cache duration for rendered PNGs |
+| `timeout_seconds` | no | `20` | Timeout for upstream Grafana render requests |
+
+## Register the Lovelace Resource
+
+Add the card resource manually:
 
 ```yaml
 resources:
@@ -66,7 +53,18 @@ resources:
     type: module
 ```
 
-## Planned Card Example
+Or in the Home Assistant UI:
+
+1. Open `Settings`
+2. Open `Dashboards`
+3. Open `Resources`
+4. Add:
+   - URL: `/api/grafana_image/static/grafana-image-card.js`
+   - Type: `JavaScript module`
+
+## Card Configuration
+
+### Minimal example
 
 ```yaml
 type: custom:grafana-image-card
@@ -77,6 +75,86 @@ to: now
 title: Aquarium temperature
 ```
 
-## Repository
+### Full example
 
-- GitHub: [phaser4/grafana-image](https://github.com/phaser4/grafana-image)
+```yaml
+type: custom:grafana-image-card
+dashboard_uid: aquarium
+panel_id: 4
+from: now-24h
+to: now
+title: Aquarium temperature
+slug: aquarium
+org_id: 1
+theme: dark
+width: 900
+height: 320
+refresh_seconds: 60
+fit: contain
+```
+
+### Card options
+
+| Option | Required | Default | Description |
+| --- | --- | --- | --- |
+| `dashboard_uid` | yes | none | Grafana dashboard UID |
+| `panel_id` | yes | none | Grafana panel ID |
+| `from` | yes | none | Grafana time range start |
+| `to` | yes | none | Grafana time range end |
+| `title` | no | none | Home Assistant card header |
+| `slug` | no | `_` | Cosmetic dashboard slug used in the render URL |
+| `org_id` | no | `1` | Grafana organization ID |
+| `theme` | no | `dark` | Grafana render theme |
+| `width` | no | `900` | Rendered PNG width |
+| `height` | no | `320` | Rendered PNG height |
+| `refresh_seconds` | no | `60` | Auto-refresh interval for the image |
+| `fit` | no | `contain` | CSS `object-fit` value for the image |
+
+## How It Works
+
+The card requests:
+
+```text
+/api/grafana_image/render?dashboard_uid=...&panel_id=...&from=...&to=...
+```
+
+Home Assistant then calls Grafana using the configured base URL and optional bearer token, requests the rendered PNG, and returns the image to the card.
+
+Successful PNG responses are cached in memory based on the effective render parameters.
+
+## Troubleshooting
+
+### Grafana image renderer is not configured
+
+If the card shows backend errors or Grafana does not return PNGs, verify that Grafana image rendering is installed and working for panel renders.
+
+### Home Assistant cannot reach Grafana
+
+Use a Grafana URL that is reachable from the Home Assistant environment, not just from your desktop browser. Docker and container setups often require a container hostname rather than `localhost`.
+
+### `401` or `403` from Grafana
+
+Verify that:
+
+- the API token is valid
+- the token has access to the dashboard
+- anonymous access is configured if you are not using a token
+
+### Mixed network or Docker hostname issues
+
+If Grafana works in a browser but not through Home Assistant, the hostname is often the problem. Test with the hostname as seen from the Home Assistant container or VM.
+
+### Slow rendering
+
+If renders are slow:
+
+- increase `timeout_seconds`
+- lower the refresh frequency
+- reduce `width` and `height`
+- verify that Grafana rendering is healthy
+
+## Security Notes
+
+- Do not expose the Grafana API token in Lovelace config.
+- Do not expose Grafana anonymously outside a trusted network unless it is otherwise protected.
+- The card does not accept a Grafana base URL, which prevents browser-side credential leaks and arbitrary upstream requests.

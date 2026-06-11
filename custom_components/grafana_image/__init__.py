@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
@@ -11,10 +10,12 @@ from .const import (
     CONF_API_TOKEN,
     CONF_CACHE_SECONDS,
     CONF_TIMEOUT_SECONDS,
+    CONF_URL,
     DEFAULT_CACHE_SECONDS,
     DEFAULT_TIMEOUT_SECONDS,
     DOMAIN,
 )
+from .runtime import build_runtime_state
 from .views import async_register_views
 
 CONFIG_SCHEMA = vol.Schema(
@@ -38,6 +39,6 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Grafana Image integration from YAML."""
-    hass.data[DOMAIN] = config.get(DOMAIN, {})
+    hass.data[DOMAIN] = build_runtime_state(config.get(DOMAIN))
     async_register_views(hass)
     return True
