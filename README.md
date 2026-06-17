@@ -43,6 +43,33 @@ grafana_image:
 | `cache_seconds` | no | `60` | In-memory cache duration for rendered PNGs |
 | `timeout_seconds` | no | `20` | Timeout for upstream Grafana render requests |
 
+### How to get a Grafana token
+
+If you do not use anonymous Grafana access, create a Grafana service account token:
+
+1. Sign in to Grafana with an account that can manage service accounts.
+2. Open `Administration`.
+3. Open `Users and access` -> `Service accounts`.
+4. Click `Add service account`.
+5. Create a service account such as `home-assistant-grafana-image`.
+6. Open that service account and click `Add service account token`.
+7. Generate the token and copy it immediately.
+8. Store it in Home Assistant, for example:
+
+```yaml
+grafana_image:
+  url: "http://grafana.local:3000"
+  api_token: !secret grafana_api_token
+```
+
+And in `secrets.yaml`:
+
+```yaml
+grafana_api_token: your_generated_token_here
+```
+
+For this integration, a read-only role such as `Viewer` is the safest starting point.
+
 ## Register the Lovelace Resource
 
 Add the card resource manually:
