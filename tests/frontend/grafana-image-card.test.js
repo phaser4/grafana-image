@@ -5,6 +5,7 @@ const {
   computeRefreshBucket,
   getAuthorizationHeader,
   normalizeConfig,
+  resolveRenderDimensions,
   validateRequiredConfig,
 } = require("../../custom_components/grafana_image/frontend/grafana-image-card.js");
 
@@ -60,6 +61,7 @@ run("buildImageUrl encodes backend parameters", () => {
       refresh_seconds: 30,
     },
     60000,
+    512,
   );
 
   assert.match(url, /^\/api\/grafana_image\/render\?/);
@@ -67,9 +69,26 @@ run("buildImageUrl encodes backend parameters", () => {
   assert.match(url, /panel_id=4/);
   assert.match(url, /from=now-24h/);
   assert.match(url, /to=now/);
-  assert.match(url, /width=1024/);
-  assert.match(url, /height=480/);
+  assert.match(url, /width=512/);
+  assert.match(url, /height=240/);
   assert.match(url, /t=2/);
+});
+
+run("resolveRenderDimensions preserves configured aspect ratio", () => {
+  const dimensions = resolveRenderDimensions(
+    {
+      dashboard_uid: "aquarium",
+      panel_id: 4,
+      from: "now-24h",
+      to: "now",
+      width: 900,
+      height: 320,
+    },
+    600,
+  );
+
+  assert.equal(dimensions.width, 600);
+  assert.equal(dimensions.height, 213);
 });
 
 run("getAuthorizationHeader reads Home Assistant token", () => {

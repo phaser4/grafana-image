@@ -99,7 +99,6 @@ dashboard_uid: aquarium
 panel_id: 4
 from: now-24h
 to: now
-title: Aquarium temperature
 ```
 
 ### Full example
@@ -110,12 +109,9 @@ dashboard_uid: aquarium
 panel_id: 4
 from: now-24h
 to: now
-title: Aquarium temperature
 slug: aquarium
 org_id: 1
 theme: dark
-width: 900
-height: 320
 refresh_seconds: 60
 fit: contain
 ```
@@ -132,8 +128,8 @@ fit: contain
 | `slug` | no | `_` | Cosmetic dashboard slug used in the render URL |
 | `org_id` | no | `1` | Grafana organization ID |
 | `theme` | no | `dark` | Grafana render theme |
-| `width` | no | `900` | Rendered PNG width |
-| `height` | no | `320` | Rendered PNG height |
+| `width` | no | `900` | Base render width used to calculate aspect ratio |
+| `height` | no | `320` | Base render height used to calculate aspect ratio |
 | `refresh_seconds` | no | `60` | Auto-refresh interval for the image |
 | `fit` | no | `contain` | CSS `object-fit` value for the image |
 

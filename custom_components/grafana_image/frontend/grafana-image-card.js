@@ -32,8 +32,23 @@ function computeRefreshBucket(refreshSeconds, nowMs = Date.now()) {
   return Math.floor(nowMs / (safeRefreshSeconds * 1000));
 }
 
-function buildImageUrl(config, nowMs = Date.now()) {
+function resolveRenderDimensions(config, measuredWidth) {
   const normalized = normalizeConfig(config);
+  const fallbackWidth = Math.max(100, Number(normalized.width) || DEFAULT_CONFIG.width);
+  const fallbackHeight = Math.max(100, Number(normalized.height) || DEFAULT_CONFIG.height);
+  const aspectRatio = fallbackHeight / fallbackWidth;
+  const effectiveWidth = Math.max(100, Math.round(Number(measuredWidth) || fallbackWidth));
+  const effectiveHeight = Math.max(100, Math.round(effectiveWidth * aspectRatio));
+
+  return {
+    width: effectiveWidth,
+    height: effectiveHeight,
+  };
+}
+
+function buildImageUrl(config, nowMs = Date.now(), measuredWidth) {
+  const normalized = normalizeConfig(config);
+  const dimensions = resolveRenderDimensions(normalized, measuredWidth);
   const url = new URL("/api/grafana_image/render", "http://homeassistant.local");
 
   url.searchParams.set("dashboard_uid", normalized.dashboard_uid);
@@ -43,8 +58,8 @@ function buildImageUrl(config, nowMs = Date.now()) {
   url.searchParams.set("slug", normalized.slug);
   url.searchParams.set("org_id", String(normalized.org_id));
   url.searchParams.set("theme", normalized.theme);
-  url.searchParams.set("width", String(normalized.width));
-  url.searchParams.set("height", String(normalized.height));
+  url.searchParams.set("width", String(dimensions.width));
+  url.searchParams.set("height", String(dimensions.height));
   url.searchParams.set("t", String(computeRefreshBucket(normalized.refresh_seconds, nowMs)));
 
   return `${url.pathname}${url.search}`;
@@ -66,6 +81,7 @@ if (typeof module !== "undefined" && module.exports) {
     computeRefreshBucket,
     getAuthorizationHeader,
     normalizeConfig,
+    resolveRenderDimensions,
     validateRequiredConfig,
   };
 }
@@ -80,8 +96,11 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._image = undefined;
       this._error = undefined;
       this._card = undefined;
+      this._wrapper = undefined;
       this._imageUrl = undefined;
       this._loadRequestId = 0;
+      this._resizeObserver = undefined;
+      this._renderWidth = undefined;
     }
 
     setConfig(config) {
@@ -102,6 +121,11 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       if (this._refreshTimer) {
         clearInterval(this._refreshTimer);
         this._refreshTimer = undefined;
+      }
+
+      if (this._resizeObserver) {
+        this._resizeObserver.disconnect();
+        this._resizeObserver = undefined;
       }
 
       this._revokeImageUrl();
@@ -153,6 +177,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
       const wrapper = document.createElement("div");
       wrapper.className = "image-wrapper";
+      this._wrapper = wrapper;
 
       this._image = document.createElement("img");
       this._image.alt = this._config.title || "Grafana panel image";
@@ -166,6 +191,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       content.appendChild(this._error);
       this._card.appendChild(content);
       this.shadowRoot.appendChild(this._card);
+
+      this._observeSize();
     }
 
     _restartRefreshTimer() {
@@ -193,7 +220,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._image.style.objectFit = this._config.fit;
 
       try {
-        const imageUrl = buildImageUrl(this._config);
+        const measuredWidth = this._getMeasuredWidth();
+        const imageUrl = buildImageUrl(this._config, Date.now(), measuredWidth);
         const response = await fetch(imageUrl, {
           headers: {
             Authorization: getAuthorizationHeader(this._hass),
@@ -248,6 +276,39 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
       URL.revokeObjectURL(this._imageUrl);
       this._imageUrl = undefined;
+    }
+
+    _observeSize() {
+      if (!this._wrapper || typeof ResizeObserver === "undefined") {
+        return;
+      }
+
+      if (this._resizeObserver) {
+        this._resizeObserver.disconnect();
+      }
+
+      this._resizeObserver = new ResizeObserver((entries) => {
+        const width = Math.round(entries[0]?.contentRect?.width || 0);
+        if (!width || width === this._renderWidth) {
+          return;
+        }
+
+        this._renderWidth = width;
+        if (this._config && this._image) {
+          this._updateImage();
+        }
+      });
+
+      this._resizeObserver.observe(this._wrapper);
+    }
+
+    _getMeasuredWidth() {
+      if (this._renderWidth) {
+        return this._renderWidth;
+      }
+
+      const width = Math.round(this._wrapper?.getBoundingClientRect?.().width || 0);
+      return width || undefined;
     }
   }
 
