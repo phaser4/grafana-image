@@ -50,11 +50,21 @@ function buildImageUrl(config, nowMs = Date.now()) {
   return `${url.pathname}${url.search}`;
 }
 
+function getAuthorizationHeader(hass) {
+  const token = hass?.auth?.data?.accessToken;
+  if (!token) {
+    throw new Error("Home Assistant access token is not available");
+  }
+
+  return `Bearer ${token}`;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_CONFIG,
     buildImageUrl,
     computeRefreshBucket,
+    getAuthorizationHeader,
     normalizeConfig,
     validateRequiredConfig,
   };
@@ -70,6 +80,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._image = undefined;
       this._error = undefined;
       this._card = undefined;
+      this._imageUrl = undefined;
+      this._loadRequestId = 0;
     }
 
     setConfig(config) {
@@ -81,6 +93,9 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
     set hass(hass) {
       this._hass = hass;
+      if (this._config && this._image) {
+        this._updateImage();
+      }
     }
 
     disconnectedCallback() {
@@ -88,6 +103,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         clearInterval(this._refreshTimer);
         this._refreshTimer = undefined;
       }
+
+      this._revokeImageUrl();
     }
 
     getCardSize() {
@@ -139,8 +156,6 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
       this._image = document.createElement("img");
       this._image.alt = this._config.title || "Grafana panel image";
-      this._image.addEventListener("load", () => this._setError(""));
-      this._image.addEventListener("error", () => this._setError("Grafana image failed to load"));
 
       this._error = document.createElement("div");
       this._error.className = "error";
@@ -167,15 +182,44 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       }, intervalMs);
     }
 
-    _updateImage() {
-      if (!this._image) {
+    async _updateImage() {
+      if (!this._image || !this._hass) {
         return;
       }
 
+      const requestId = ++this._loadRequestId;
       this._lastBucket = computeRefreshBucket(this._config.refresh_seconds);
       this._setError("");
       this._image.style.objectFit = this._config.fit;
-      this._image.src = buildImageUrl(this._config);
+
+      try {
+        const response = await fetch(buildImageUrl(this._config), {
+          headers: {
+            Authorization: getAuthorizationHeader(this._hass),
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Render request failed with status ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        if (requestId !== this._loadRequestId) {
+          return;
+        }
+
+        this._revokeImageUrl();
+        this._imageUrl = URL.createObjectURL(blob);
+        this._image.src = this._imageUrl;
+      } catch (_error) {
+        if (requestId !== this._loadRequestId) {
+          return;
+        }
+
+        this._revokeImageUrl();
+        this._image.removeAttribute("src");
+        this._setError("Grafana image failed to load");
+      }
     }
 
     _setError(message) {
@@ -185,6 +229,15 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
       this._error.textContent = message;
       this._error.hidden = !message;
+    }
+
+    _revokeImageUrl() {
+      if (!this._imageUrl) {
+        return;
+      }
+
+      URL.revokeObjectURL(this._imageUrl);
+      this._imageUrl = undefined;
     }
   }
 

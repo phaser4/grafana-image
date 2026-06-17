@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   buildImageUrl,
   computeRefreshBucket,
+  getAuthorizationHeader,
   normalizeConfig,
   validateRequiredConfig,
 } = require("../../custom_components/grafana_image/frontend/grafana-image-card.js");
@@ -69,4 +70,18 @@ run("buildImageUrl encodes backend parameters", () => {
   assert.match(url, /width=1024/);
   assert.match(url, /height=480/);
   assert.match(url, /t=2/);
+});
+
+run("getAuthorizationHeader reads Home Assistant token", () => {
+  assert.equal(
+    getAuthorizationHeader({ auth: { data: { accessToken: "abc123" } } }),
+    "Bearer abc123",
+  );
+});
+
+run("getAuthorizationHeader rejects missing token", () => {
+  assert.throws(
+    () => getAuthorizationHeader({}),
+    /Home Assistant access token is not available/,
+  );
 });
