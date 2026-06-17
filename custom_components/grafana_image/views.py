@@ -108,7 +108,7 @@ class GrafanaImageStaticView(HomeAssistantView):
 
     url = STATIC_PATH
     name = "api:grafana_image:static"
-    requires_auth = True
+    requires_auth = False
 
     async def get(self, request: web.Request) -> web.FileResponse:
         """Serve the frontend module file."""
