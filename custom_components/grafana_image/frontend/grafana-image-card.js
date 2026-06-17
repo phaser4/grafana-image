@@ -51,7 +51,7 @@ function buildImageUrl(config, nowMs = Date.now()) {
 }
 
 function getAuthorizationHeader(hass) {
-  const token = hass?.auth?.data?.accessToken;
+  const token = hass?.auth?.data?.access_token ?? hass?.auth?.data?.accessToken;
   if (!token) {
     throw new Error("Home Assistant access token is not available");
   }
@@ -193,13 +193,18 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._image.style.objectFit = this._config.fit;
 
       try {
-        const response = await fetch(buildImageUrl(this._config), {
+        const imageUrl = buildImageUrl(this._config);
+        const response = await fetch(imageUrl, {
           headers: {
             Authorization: getAuthorizationHeader(this._hass),
           },
         });
 
         if (!response.ok) {
+          console.warn("Grafana Image render request failed", {
+            status: response.status,
+            url: imageUrl,
+          });
           throw new Error(`Render request failed with status ${response.status}`);
         }
 
@@ -216,6 +221,11 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
           return;
         }
 
+        console.warn("Grafana Image could not load panel image", {
+          error: _error instanceof Error ? _error.message : _error,
+          dashboard_uid: this._config.dashboard_uid,
+          panel_id: this._config.panel_id,
+        });
         this._revokeImageUrl();
         this._image.removeAttribute("src");
         this._setError("Grafana image failed to load");

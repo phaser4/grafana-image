@@ -79,6 +79,13 @@ run("getAuthorizationHeader reads Home Assistant token", () => {
   );
 });
 
+run("getAuthorizationHeader supports snake_case token", () => {
+  assert.equal(
+    getAuthorizationHeader({ auth: { data: { access_token: "snake123" } } }),
+    "Bearer snake123",
+  );
+});
+
 run("getAuthorizationHeader rejects missing token", () => {
   assert.throws(
     () => getAuthorizationHeader({}),
