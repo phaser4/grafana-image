@@ -85,7 +85,6 @@ class GrafanaImageStatusView(HomeAssistantView):
 
         cache_entry = runtime[DATA_CACHE].get(cache_key)
         if cache_entry and not cache_entry_is_valid(cache_entry, now=now):
-            runtime[DATA_CACHE].pop(cache_key, None)
             cache_entry = None
 
         if not cache_entry or not cache_entry_is_fresh(cache_entry, now=now):

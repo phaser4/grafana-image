@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 import logging
+from pathlib import Path
 
 from aiohttp import ClientError
 from homeassistant.core import HomeAssistant
@@ -22,6 +23,7 @@ from .const import (
     DEFAULT_MAX_CONCURRENT_RENDERS,
     DEFAULT_TIMEOUT_SECONDS,
     DATA_CACHE,
+    DATA_CACHE_DIR,
     DATA_QUEUED_KEYS,
     DATA_RENDER_EVENT,
     DATA_RENDER_QUEUE,
@@ -29,7 +31,14 @@ from .const import (
     DATA_RENDER_TASK,
     DOMAIN,
 )
-from .runtime import RenderState, build_cache_entry, build_grafana_render_url, build_runtime_state
+from .runtime import (
+    RenderState,
+    build_cache_entry,
+    build_grafana_render_url,
+    build_runtime_state,
+    load_cache_entries,
+    persist_cache_entry,
+)
 from .views import async_register_views
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,6 +69,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Grafana Image integration from YAML."""
     hass.data[DOMAIN] = build_runtime_state(config.get(DOMAIN))
     runtime_config = hass.data[DOMAIN]["config"]
+    cache_dir = Path(hass.config.path(".storage", DOMAIN))
+    hass.data[DOMAIN][DATA_CACHE_DIR] = cache_dir
+    hass.data[DOMAIN][DATA_CACHE] = await hass.async_add_executor_job(load_cache_entries, cache_dir)
     hass.data[DOMAIN][DATA_RENDER_EVENT] = asyncio.Event()
     async_register_views(hass)
 
@@ -71,6 +83,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         runtime_config[CONF_MAX_CONCURRENT_RENDERS],
         runtime_config[CONF_TIMEOUT_SECONDS],
     )
+    if hass.data[DOMAIN][DATA_CACHE]:
+        _LOGGER.info(
+            "Grafana Image restored %s cached image(s) from %s",
+            len(hass.data[DOMAIN][DATA_CACHE]),
+            cache_dir,
+        )
     hass.async_create_task(_async_probe_grafana(hass))
     hass.data[DOMAIN][DATA_RENDER_TASK] = hass.async_create_task(_async_render_worker(hass))
     return True
@@ -158,14 +176,28 @@ async def _async_render_worker(hass: HomeAssistant) -> None:
                 state.last_error = f"Unexpected internal error: {err}"
                 _LOGGER.exception("Grafana Image queued render failed unexpectedly for %s", cache_key)
             else:
-                runtime[DATA_CACHE][cache_key] = build_cache_entry(
+                cache_entry = build_cache_entry(
                     content,
                     content_type,
                     runtime["config"][CONF_CACHE_SECONDS],
                     params["refresh_seconds"],
                 )
+                runtime[DATA_CACHE][cache_key] = cache_entry
                 state.last_error = None
                 state.last_completed_at = datetime.now(UTC)
+                try:
+                    await hass.async_add_executor_job(
+                        persist_cache_entry,
+                        runtime[DATA_CACHE_DIR],
+                        cache_key,
+                        cache_entry,
+                    )
+                except Exception as err:  # pragma: no cover - defensive logging
+                    _LOGGER.warning(
+                        "Grafana Image could not persist cached render for %s: %s",
+                        cache_key,
+                        err,
+                    )
             finally:
                 state.is_rendering = False
 

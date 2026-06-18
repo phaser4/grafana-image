@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import hashlib
+import json
+from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import quote, urlencode
 
@@ -22,7 +26,8 @@ DEFAULT_ORG_ID = 1
 DEFAULT_THEME = "dark"
 DEFAULT_WIDTH = 900
 DEFAULT_HEIGHT = 320
-DEFAULT_REFRESH_SECONDS = 60
+DEFAULT_REFRESH_SECONDS = 300
+CACHE_RECORD_VERSION = 1
 
 REQUIRED_QUERY_PARAMS = ("dashboard_uid", "panel_id", "from", "to")
 CACHE_KEY_FIELDS = (
@@ -46,7 +51,7 @@ class QueryValidationError(ValueError):
 class CacheEntry:
     """Cached PNG response metadata."""
 
-    expires_at: datetime
+    expires_at: datetime | None
     fresh_until: datetime
     rendered_at: datetime
     content: bytes
@@ -157,9 +162,8 @@ def build_cache_entry(
 ) -> CacheEntry:
     """Create a cache entry for a successful PNG response."""
     timestamp = now or datetime.now(UTC)
-    retention_seconds = max(cache_seconds, refresh_seconds)
     return CacheEntry(
-        expires_at=timestamp + timedelta(seconds=retention_seconds),
+        expires_at=None,
         fresh_until=timestamp + timedelta(seconds=refresh_seconds),
         rendered_at=timestamp,
         content=content,
@@ -169,14 +173,79 @@ def build_cache_entry(
 
 def cache_entry_is_valid(entry: CacheEntry, now: datetime | None = None) -> bool:
     """Return whether a cache entry is still valid."""
-    timestamp = now or datetime.now(UTC)
-    return entry.expires_at > timestamp
+    return bool(entry.content) and bool(entry.content_type)
 
 
 def cache_entry_is_fresh(entry: CacheEntry, now: datetime | None = None) -> bool:
     """Return whether a cache entry is still fresh enough for direct use."""
     timestamp = now or datetime.now(UTC)
     return entry.fresh_until > timestamp
+
+
+def build_cache_file_name(cache_key: tuple[Any, ...]) -> str:
+    """Build a stable file name for one cache key."""
+    digest = hashlib.sha256(
+        json.dumps(list(cache_key), separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    return f"{digest}.json"
+
+
+def persist_cache_entry(cache_dir: Path, cache_key: tuple[Any, ...], entry: CacheEntry) -> None:
+    """Persist one cache entry to disk."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    payload = serialize_cache_entry(cache_key, entry)
+    (cache_dir / build_cache_file_name(cache_key)).write_text(
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=True),
+        encoding="utf-8",
+    )
+
+
+def load_cache_entries(cache_dir: Path) -> dict[tuple[Any, ...], CacheEntry]:
+    """Load persisted cache entries from disk."""
+    if not cache_dir.exists():
+        return {}
+
+    cache: dict[tuple[Any, ...], CacheEntry] = {}
+    for cache_file in cache_dir.glob("*.json"):
+        try:
+            payload = json.loads(cache_file.read_text(encoding="utf-8"))
+            cache_key, entry = deserialize_cache_entry(payload)
+        except Exception:
+            continue
+
+        cache[cache_key] = entry
+
+    return cache
+
+
+def serialize_cache_entry(cache_key: tuple[Any, ...], entry: CacheEntry) -> dict[str, Any]:
+    """Serialize one cache entry to a JSON-safe dict."""
+    return {
+        "version": CACHE_RECORD_VERSION,
+        "cache_key": list(cache_key),
+        "expires_at": entry.expires_at.isoformat() if entry.expires_at else None,
+        "fresh_until": entry.fresh_until.isoformat(),
+        "rendered_at": entry.rendered_at.isoformat(),
+        "content_type": entry.content_type,
+        "content_b64": base64.b64encode(entry.content).decode("ascii"),
+    }
+
+
+def deserialize_cache_entry(payload: dict[str, Any]) -> tuple[tuple[Any, ...], CacheEntry]:
+    """Deserialize one cache entry from a JSON-safe dict."""
+    if payload.get("version") != CACHE_RECORD_VERSION:
+        raise ValueError("Unsupported cache record version")
+
+    cache_key = tuple(payload["cache_key"])
+    expires_at_raw = payload.get("expires_at")
+
+    return cache_key, CacheEntry(
+        expires_at=datetime.fromisoformat(expires_at_raw) if expires_at_raw else None,
+        fresh_until=datetime.fromisoformat(payload["fresh_until"]),
+        rendered_at=datetime.fromisoformat(payload["rendered_at"]),
+        content=base64.b64decode(payload["content_b64"], validate=True),
+        content_type=str(payload["content_type"]),
+    )
 
 
 def _parse_positive_int(name: str, value: Any) -> int:

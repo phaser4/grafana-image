@@ -5,7 +5,7 @@ const DEFAULT_CONFIG = {
   width: 900,
   rows: 3,
   columns: 12,
-  refresh_seconds: 60,
+  refresh_seconds: 300,
   fit: "contain",
 };
 const MIN_FETCH_INTERVAL_MS = 30000;

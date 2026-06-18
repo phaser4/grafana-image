@@ -52,7 +52,7 @@ run("normalizeConfig applies defaults", () => {
   assert.equal(config.width, 900);
   assert.equal(config.rows, 3);
   assert.equal(config.columns, 12);
-  assert.equal(config.refresh_seconds, 60);
+  assert.equal(config.refresh_seconds, 300);
   assert.equal(config.fit, "contain");
 });
 
