@@ -9,11 +9,13 @@ const {
   MIN_FETCH_INTERVAL_MS,
   getAuthorizationHeader,
   normalizeConfig,
+  readErrorMessage,
   resolveCardHeight,
   resolveCardColumns,
   resolveCardRows,
   resolveFallbackRenderHeight,
   resolveGridOptions,
+  resolvePlaceholderMessage,
   resolveRenderDimensions,
   shouldFetchImage,
   validateRequiredConfig,
@@ -107,6 +109,46 @@ run("buildImageUrl appends cache token for ready image fetches", () => {
   assert.match(url, /height=284/);
   assert.match(url, /refresh_seconds=30/);
   assert.match(url, /v=2026-01-01T00%3A00%3A00%2B00%3A00/);
+});
+
+run("resolvePlaceholderMessage reflects queued state", () => {
+  assert.equal(
+    resolvePlaceholderMessage({ status: "queued", message: "Image render queued" }),
+    "Image render queued",
+  );
+});
+
+run("resolvePlaceholderMessage reflects backend error", () => {
+  assert.equal(
+    resolvePlaceholderMessage({ status: "error", message: "Grafana render request timed out" }),
+    "Grafana render request timed out",
+  );
+});
+
+run("readErrorMessage returns backend message payload", async () => {
+  const message = await readErrorMessage(
+    {
+      async json() {
+        return { message: "Grafana image render is queued" };
+      },
+    },
+    "fallback",
+  );
+
+  assert.equal(message, "Grafana image render is queued");
+});
+
+run("readErrorMessage falls back when payload is not JSON", async () => {
+  const message = await readErrorMessage(
+    {
+      async json() {
+        throw new Error("no json");
+      },
+    },
+    "fallback",
+  );
+
+  assert.equal(message, "fallback");
 });
 
 run("shouldFetchImage allows first fetch", () => {

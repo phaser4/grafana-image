@@ -173,6 +173,40 @@ function getAuthorizationHeader(hass) {
   return `Bearer ${token}`;
 }
 
+function resolvePlaceholderMessage(status, fallbackMessage = "Grafana image unavailable") {
+  if (!status) {
+    return fallbackMessage;
+  }
+
+  if (status.status === "queued") {
+    return status.message || "Image render queued";
+  }
+  if (status.status === "rendering") {
+    return status.message || "Rendering image...";
+  }
+  if (status.status === "error") {
+    return status.message || status.last_error || fallbackMessage;
+  }
+  if (status.status === "stale" && !status.has_cached_image) {
+    return status.message || "Refreshing image...";
+  }
+
+  return fallbackMessage;
+}
+
+async function readErrorMessage(response, fallbackMessage) {
+  try {
+    const data = await response.json();
+    if (data && typeof data.message === "string" && data.message.trim()) {
+      return data.message.trim();
+    }
+  } catch (_error) {
+    // Ignore JSON parse failures and use the fallback message.
+  }
+
+  return fallbackMessage;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_CONFIG,
@@ -184,11 +218,13 @@ if (typeof module !== "undefined" && module.exports) {
     computeRefreshBucket,
     getAuthorizationHeader,
     normalizeConfig,
+    readErrorMessage,
     resolveCardHeight,
     resolveCardColumns,
     resolveCardRows,
     resolveFallbackRenderHeight,
     resolveGridOptions,
+    resolvePlaceholderMessage,
     resolveRenderDimensions,
     shouldFetchImage,
     validateRequiredConfig,
@@ -207,6 +243,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._card = undefined;
       this._wrapper = undefined;
       this._imageUrl = undefined;
+      this._placeholder = undefined;
       this._loadRequestId = 0;
       this._resizeObserver = undefined;
       this._status = undefined;
@@ -283,6 +320,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
           .image-wrapper {
             position: relative;
             height: ${fallbackRenderHeight}px;
+            overflow: hidden;
+            background: var(--secondary-background-color, rgba(127, 127, 127, 0.08));
           }
 
           img {
@@ -290,6 +329,28 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
             height: 100%;
             display: block;
             object-fit: ${this._config.fit};
+          }
+
+          img[hidden] {
+            display: none;
+          }
+
+          .placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            box-sizing: border-box;
+            text-align: center;
+            color: var(--secondary-text-color);
+            line-height: 1.4;
+            white-space: pre-wrap;
+          }
+
+          .placeholder[hidden] {
+            display: none;
           }
 
           .error {
@@ -323,7 +384,11 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._wrapper = wrapper;
 
       this._image = document.createElement("img");
-      this._image.alt = this._config.title || "Grafana panel image";
+      this._image.alt = "";
+
+      this._placeholder = document.createElement("div");
+      this._placeholder.className = "placeholder";
+      this._placeholder.hidden = true;
 
       this._error = document.createElement("div");
       this._error.className = "error";
@@ -334,6 +399,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._status.hidden = true;
 
       wrapper.appendChild(this._image);
+      wrapper.appendChild(this._placeholder);
       content.appendChild(wrapper);
       content.appendChild(this._status);
       content.appendChild(this._error);
@@ -386,10 +452,14 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         });
 
         if (!statusResponse.ok) {
+          const statusMessage = await readErrorMessage(
+            statusResponse,
+            `Status request failed with status ${statusResponse.status}`,
+          );
           console.warn("Grafana Image status request failed", {
             status: statusResponse.status,
           });
-          throw new Error(`Status request failed with status ${statusResponse.status}`);
+          throw new Error(statusMessage);
         }
 
         const status = await statusResponse.json();
@@ -408,6 +478,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         } else {
           this._revokeImageUrl();
           this._image.removeAttribute("src");
+          this._setImageVisible(false);
+          this._setPlaceholder(resolvePlaceholderMessage(status));
         }
 
         this._scheduleStatusPoll(status);
@@ -426,7 +498,9 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         this._setStatus("");
         this._revokeImageUrl();
         this._image.removeAttribute("src");
-        this._setError("Grafana image failed to load");
+        this._setImageVisible(false);
+        this._setPlaceholder(_error instanceof Error ? _error.message : "Grafana image failed to load");
+        this._setError(_error instanceof Error ? _error.message : "Grafana image failed to load");
         this._statusPollTimer = setTimeout(() => {
           this._statusPollTimer = undefined;
           this._updateImage(true);
@@ -456,7 +530,9 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
           status: response.status,
           url: imageUrl,
         });
-        throw new Error(`Cached image request failed with status ${response.status}`);
+        throw new Error(
+          await readErrorMessage(response, `Cached image request failed with status ${response.status}`),
+        );
       }
 
       const blob = await response.blob();
@@ -467,6 +543,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._revokeImageUrl();
       this._imageUrl = URL.createObjectURL(blob);
       this._image.src = this._imageUrl;
+      this._setImageVisible(true);
+      this._setPlaceholder("");
     }
 
     _setError(message) {
@@ -485,6 +563,23 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
       this._status.textContent = message;
       this._status.hidden = !message;
+    }
+
+    _setPlaceholder(message) {
+      if (!this._placeholder) {
+        return;
+      }
+
+      this._placeholder.textContent = message;
+      this._placeholder.hidden = !message;
+    }
+
+    _setImageVisible(isVisible) {
+      if (!this._image) {
+        return;
+      }
+
+      this._image.hidden = !isVisible;
     }
 
     _revokeImageUrl() {
