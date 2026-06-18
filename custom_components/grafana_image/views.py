@@ -24,9 +24,11 @@ from .runtime import (
     QueryValidationError,
     RenderState,
     build_cache_key,
+    build_status_message,
     cache_entry_is_fresh,
     cache_entry_is_valid,
     parse_render_request,
+    resolve_render_status,
 )
 
 FRONTEND_FILE = Path(__file__).parent / "frontend" / "grafana-image-card.js"
@@ -90,11 +92,11 @@ class GrafanaImageStatusView(HomeAssistantView):
         if not cache_entry or not cache_entry_is_fresh(cache_entry, now=now):
             _enqueue_render(runtime, cache_key, params, state, now)
 
-        status = _resolve_status(cache_entry, state, now)
+        status = resolve_render_status(cache_entry, state, now)
         return web.json_response(
             {
                 "status": status,
-                "message": _build_status_message(status, state),
+                "message": build_status_message(status, state),
                 "has_cached_image": bool(cache_entry),
                 "is_stale": bool(cache_entry) and not cache_entry_is_fresh(cache_entry, now=now),
                 "cache_token": cache_entry.rendered_at.isoformat() if cache_entry else None,
@@ -148,23 +150,6 @@ def _enqueue_render(
     runtime[DATA_RENDER_EVENT].set()
     state.is_queued = True
     state.queued_at = now
-
-
-def _resolve_status(cache_entry, state, now: datetime) -> str:
-    """Resolve frontend status for a render key."""
-    if cache_entry and cache_entry_is_fresh(cache_entry, now=now):
-        return "ready"
-    if cache_entry:
-        return "stale"
-    if state.is_rendering:
-        return "rendering"
-    if state.is_queued:
-        return "queued"
-    if state.last_error:
-        return "error"
-    return "queued"
-
-
 def _resolve_poll_after_ms(status: str, refresh_seconds: int) -> int:
     """Suggest a frontend poll interval for this status."""
     if status == "ready":
@@ -172,16 +157,3 @@ def _resolve_poll_after_ms(status: str, refresh_seconds: int) -> int:
     if status == "error":
         return 5000
     return 2000
-
-
-def _build_status_message(status: str, state) -> str:
-    """Build a user-facing status message."""
-    if status == "stale":
-        return "Refreshing image..."
-    if status == "rendering":
-        return "Rendering image..."
-    if status == "queued":
-        return "Image render queued"
-    if status == "error":
-        return state.last_error or "Grafana image failed to load"
-    return ""

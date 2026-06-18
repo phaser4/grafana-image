@@ -191,5 +191,31 @@ class UrlAndCacheTests(unittest.TestCase):
         self.assertEqual(loaded[cache_key].rendered_at, now)
 
 
+class StatusResolutionTests(unittest.TestCase):
+    def test_reports_error_before_queued_when_last_render_failed(self):
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        state = runtime.RenderState(
+            is_queued=True,
+            last_error="Grafana render request failed: 404",
+        )
+
+        status = runtime.resolve_render_status(None, state, now)
+
+        self.assertEqual(status, "error")
+        self.assertEqual(
+            runtime.build_status_message(status, state),
+            "Grafana render request failed: 404",
+        )
+
+    def test_reports_queued_without_error_when_render_has_not_run_yet(self):
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        state = runtime.RenderState(is_queued=True)
+
+        status = runtime.resolve_render_status(None, state, now)
+
+        self.assertEqual(status, "queued")
+        self.assertEqual(runtime.build_status_message(status, state), "Image render queued")
+
+
 if __name__ == "__main__":
     unittest.main()

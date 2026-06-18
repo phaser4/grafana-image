@@ -182,6 +182,39 @@ def cache_entry_is_fresh(entry: CacheEntry, now: datetime | None = None) -> bool
     return entry.fresh_until > timestamp
 
 
+def resolve_render_status(cache_entry: CacheEntry | None, state: RenderState, now: datetime) -> str:
+    """Resolve frontend status for a render key.
+
+    Preserve the last render error until a retry is actively rendering or a
+    successful image becomes available, so the UI does not get stuck showing a
+    misleading queued state after repeated failures.
+    """
+    if cache_entry and cache_entry_is_fresh(cache_entry, now=now):
+        return "ready"
+    if cache_entry:
+        return "stale"
+    if state.is_rendering:
+        return "rendering"
+    if state.last_error:
+        return "error"
+    if state.is_queued:
+        return "queued"
+    return "queued"
+
+
+def build_status_message(status: str, state: RenderState) -> str:
+    """Build a user-facing status message."""
+    if status == "stale":
+        return "Refreshing image..."
+    if status == "rendering":
+        return "Rendering image..."
+    if status == "queued":
+        return "Image render queued"
+    if status == "error":
+        return state.last_error or "Grafana image failed to load"
+    return ""
+
+
 def build_cache_file_name(cache_key: tuple[Any, ...]) -> str:
     """Build a stable file name for one cache key."""
     digest = hashlib.sha256(
