@@ -222,25 +222,16 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         <style>
           :host {
             display: block;
-            height: 100%;
-          }
-
-          ha-card {
-            height: 100%;
           }
 
           .card-content {
             padding: 16px;
             box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
-            height: 100%;
           }
 
           .image-wrapper {
             position: relative;
-            flex: 1;
-            min-height: ${fallbackRenderHeight}px;
+            height: ${fallbackRenderHeight}px;
           }
 
           img {
