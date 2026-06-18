@@ -68,7 +68,7 @@ function resolveFallbackRenderHeight(config) {
   };
   const verticalChrome = 32 + (merged.title ? 40 : 0);
 
-  return Math.max(100, resolveCardRows(merged) * 50 - verticalChrome);
+  return Math.max(1, resolveCardRows(merged) * 50 - verticalChrome);
 }
 
 function resolveGridOptions(config) {
@@ -88,7 +88,7 @@ function resolveRenderDimensions(config, measuredWidth, measuredHeight) {
   const normalized = normalizeConfig(config);
   const fallbackWidth = Math.max(100, Number(normalized.width) || DEFAULT_CONFIG.width);
   const effectiveWidth = Math.max(100, Math.round(Number(measuredWidth) || fallbackWidth));
-  const effectiveHeight = Math.max(100, Math.round(Number(measuredHeight) || resolveFallbackRenderHeight(normalized)));
+  const effectiveHeight = Math.max(1, Math.round(Number(measuredHeight) || resolveFallbackRenderHeight(normalized)));
 
   return {
     width: effectiveWidth,

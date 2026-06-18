@@ -163,7 +163,8 @@ run("resolveCardColumns clamps to Home Assistant grid width", () => {
 
 run("resolveFallbackRenderHeight subtracts card chrome", () => {
   assert.equal(resolveFallbackRenderHeight({ rows: 3 }), 118);
-  assert.equal(resolveFallbackRenderHeight({ rows: 3, title: "Aquarium" }), 100);
+  assert.equal(resolveFallbackRenderHeight({ rows: 3, title: "Aquarium" }), 78);
+  assert.equal(resolveFallbackRenderHeight({ rows: 2 }), 68);
 });
 
 run("resolveGridOptions defaults to a full-width three-row card", () => {
