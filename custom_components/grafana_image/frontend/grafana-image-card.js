@@ -192,13 +192,11 @@ function formatAgeLabel(lastRenderedAt, nowMs = Date.now()) {
   return `age: ${Math.floor(ageHours / 24)}d`;
 }
 
-function getAuthorizationHeader(hass) {
-  const token = hass?.auth?.data?.access_token ?? hass?.auth?.data?.accessToken;
-  if (!token) {
-    throw new Error("Home Assistant access token is not available");
-  }
-
-  return `Bearer ${token}`;
+function buildBackendFetchOptions() {
+  return {
+    cache: "no-store",
+    credentials: "same-origin",
+  };
 }
 
 function resolvePlaceholderMessage(status, fallbackMessage = "Grafana image unavailable") {
@@ -245,7 +243,7 @@ if (typeof module !== "undefined" && module.exports) {
     computeCardSize,
     computeRefreshBucket,
     formatAgeLabel,
-    getAuthorizationHeader,
+    buildBackendFetchOptions,
     normalizeConfig,
     readErrorMessage,
     resolveCardHeight,
@@ -499,12 +497,10 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
         requestId = ++this._loadRequestId;
         this._setError("");
-        const statusResponse = await fetch(buildStatusUrl(this._config, measuredWidth, measuredHeight), {
-          headers: {
-            Authorization: getAuthorizationHeader(this._hass),
-          },
-          cache: "no-store",
-        });
+        const statusResponse = await fetch(
+          buildStatusUrl(this._config, measuredWidth, measuredHeight),
+          buildBackendFetchOptions(),
+        );
 
         if (!statusResponse.ok) {
           const statusMessage = await readErrorMessage(
@@ -574,12 +570,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._lastFetchAt = nowMs;
       this._image.style.objectFit = this._config.fit;
 
-      const response = await fetch(imageUrl, {
-        headers: {
-          Authorization: getAuthorizationHeader(this._hass),
-        },
-        cache: "no-store",
-      });
+      const response = await fetch(imageUrl, buildBackendFetchOptions());
 
       if (!response.ok) {
         console.warn("Grafana Image cached image request failed", {

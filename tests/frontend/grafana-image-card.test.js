@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 
 const {
+  buildBackendFetchOptions,
   buildImageUrl,
   buildStatusUrl,
   computeCardSize,
@@ -8,7 +9,6 @@ const {
   formatAgeLabel,
   GRID_COLUMN_COUNT,
   MIN_FETCH_INTERVAL_MS,
-  getAuthorizationHeader,
   normalizeConfig,
   readErrorMessage,
   resolveCardHeight,
@@ -260,23 +260,9 @@ run("resolveGridOptions defaults to a full-width three-row card", () => {
   });
 });
 
-run("getAuthorizationHeader reads Home Assistant token", () => {
-  assert.equal(
-    getAuthorizationHeader({ auth: { data: { accessToken: "abc123" } } }),
-    "Bearer abc123",
-  );
-});
-
-run("getAuthorizationHeader supports snake_case token", () => {
-  assert.equal(
-    getAuthorizationHeader({ auth: { data: { access_token: "snake123" } } }),
-    "Bearer snake123",
-  );
-});
-
-run("getAuthorizationHeader rejects missing token", () => {
-  assert.throws(
-    () => getAuthorizationHeader({}),
-    /Home Assistant access token is not available/,
-  );
+run("buildBackendFetchOptions uses same-origin credentials", () => {
+  assert.deepEqual(buildBackendFetchOptions(), {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
 });
