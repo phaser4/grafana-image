@@ -29,7 +29,10 @@ class NormalizeIntegrationConfigTests(unittest.TestCase):
 
         self.assertEqual(state["config"]["url"], "http://grafana.local:3000")
         self.assertEqual(state["cache"], {})
-        self.assertEqual(state["fetch_locks"], {})
+        self.assertEqual(state["render_states"], {})
+        self.assertEqual(list(state["render_queue"]), [])
+        self.assertEqual(state["queued_keys"], set())
+        self.assertIsNone(state["render_event"])
 
     def test_applies_defaults(self):
         config = runtime.normalize_integration_config({"url": "http://grafana.local:3000/"})
@@ -67,6 +70,7 @@ class ParseRenderRequestTests(unittest.TestCase):
         self.assertEqual(params["theme"], "dark")
         self.assertEqual(params["width"], 900)
         self.assertEqual(params["height"], 320)
+        self.assertEqual(params["refresh_seconds"], 60)
 
     def test_rejects_missing_required_params(self):
         with self.assertRaises(runtime.QueryValidationError):
@@ -145,12 +149,16 @@ class UrlAndCacheTests(unittest.TestCase):
 
     def test_cache_entry_validity(self):
         now = datetime(2026, 1, 1, tzinfo=UTC)
-        valid_entry = runtime.build_cache_entry(b"png", "image/png", 60, now=now)
+        valid_entry = runtime.build_cache_entry(
+            b"png", "image/png", 60, 30, now=now
+        )
 
         self.assertTrue(runtime.cache_entry_is_valid(valid_entry, now=now + timedelta(seconds=30)))
         self.assertFalse(
             runtime.cache_entry_is_valid(valid_entry, now=now + timedelta(seconds=61))
         )
+        self.assertTrue(runtime.cache_entry_is_fresh(valid_entry, now=now + timedelta(seconds=29)))
+        self.assertFalse(runtime.cache_entry_is_fresh(valid_entry, now=now + timedelta(seconds=31)))
 
 
 if __name__ == "__main__":

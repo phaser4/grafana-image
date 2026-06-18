@@ -111,7 +111,26 @@ function resolveRenderDimensions(config, measuredWidth, measuredHeight) {
   };
 }
 
-function buildImageUrl(config, nowMs = Date.now(), measuredWidth, measuredHeight) {
+function buildStatusUrl(config, measuredWidth, measuredHeight) {
+  const normalized = normalizeConfig(config);
+  const dimensions = resolveRenderDimensions(normalized, measuredWidth, measuredHeight);
+  const url = new URL("/api/grafana_image/status", "http://homeassistant.local");
+
+  url.searchParams.set("dashboard_uid", normalized.dashboard_uid);
+  url.searchParams.set("panel_id", String(normalized.panel_id));
+  url.searchParams.set("from", normalized.from);
+  url.searchParams.set("to", normalized.to);
+  url.searchParams.set("slug", normalized.slug);
+  url.searchParams.set("org_id", String(normalized.org_id));
+  url.searchParams.set("theme", normalized.theme);
+  url.searchParams.set("width", String(dimensions.width));
+  url.searchParams.set("height", String(dimensions.height));
+  url.searchParams.set("refresh_seconds", String(normalized.refresh_seconds));
+
+  return `${url.pathname}${url.search}`;
+}
+
+function buildImageUrl(config, cacheToken, measuredWidth, measuredHeight) {
   const normalized = normalizeConfig(config);
   const dimensions = resolveRenderDimensions(normalized, measuredWidth, measuredHeight);
   const url = new URL("/api/grafana_image/render", "http://homeassistant.local");
@@ -125,7 +144,10 @@ function buildImageUrl(config, nowMs = Date.now(), measuredWidth, measuredHeight
   url.searchParams.set("theme", normalized.theme);
   url.searchParams.set("width", String(dimensions.width));
   url.searchParams.set("height", String(dimensions.height));
-  url.searchParams.set("t", String(computeRefreshBucket(normalized.refresh_seconds, nowMs)));
+  url.searchParams.set("refresh_seconds", String(normalized.refresh_seconds));
+  if (cacheToken) {
+    url.searchParams.set("v", String(cacheToken));
+  }
 
   return `${url.pathname}${url.search}`;
 }
@@ -157,6 +179,7 @@ if (typeof module !== "undefined" && module.exports) {
     GRID_COLUMN_COUNT,
     MIN_FETCH_INTERVAL_MS,
     buildImageUrl,
+    buildStatusUrl,
     computeCardSize,
     computeRefreshBucket,
     getAuthorizationHeader,
@@ -186,6 +209,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._imageUrl = undefined;
       this._loadRequestId = 0;
       this._resizeObserver = undefined;
+      this._status = undefined;
+      this._statusPollTimer = undefined;
       this._renderWidth = undefined;
       this._renderHeight = undefined;
       this._lastRequestedUrl = undefined;
@@ -215,6 +240,10 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       if (this._resizeObserver) {
         this._resizeObserver.disconnect();
         this._resizeObserver = undefined;
+      }
+      if (this._statusPollTimer) {
+        clearTimeout(this._statusPollTimer);
+        this._statusPollTimer = undefined;
       }
 
       this._revokeImageUrl();
@@ -268,6 +297,13 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
             padding: 16px;
           }
 
+          .status {
+            color: var(--secondary-text-color);
+            font-size: 0.9rem;
+            padding: 16px 0 0;
+          }
+
+          .status[hidden],
           .error[hidden] {
             display: none;
           }
@@ -293,8 +329,13 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._error.className = "error";
       this._error.hidden = true;
 
+      this._status = document.createElement("div");
+      this._status.className = "status";
+      this._status.hidden = true;
+
       wrapper.appendChild(this._image);
       content.appendChild(wrapper);
+      content.appendChild(this._status);
       content.appendChild(this._error);
       this._card.appendChild(content);
       this.shadowRoot.appendChild(this._card);
@@ -311,16 +352,17 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._refreshTimer = setInterval(() => {
         const nextBucket = computeRefreshBucket(this._config.refresh_seconds);
         if (nextBucket !== this._lastBucket) {
-          this._updateImage();
+          this._updateImage(true);
         }
       }, intervalMs);
     }
 
-    async _updateImage() {
+    async _updateImage(forceStatusCheck = false) {
       if (!this._image || !this._hass) {
         return;
       }
 
+      this._clearStatusPoll();
       let requestId = 0;
       try {
         const { width: measuredWidth, height: measuredHeight } = this._getMeasuredDimensions();
@@ -329,40 +371,46 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         }
 
         const nowMs = Date.now();
-        const imageUrl = buildImageUrl(this._config, nowMs, measuredWidth, measuredHeight);
-        if (!shouldFetchImage(imageUrl, this._lastRequestedUrl, this._lastFetchAt, nowMs)) {
+        const nextBucket = computeRefreshBucket(this._config.refresh_seconds, nowMs);
+        if (!forceStatusCheck && nextBucket === this._lastBucket && this._statusPollTimer) {
           return;
         }
 
         requestId = ++this._loadRequestId;
-        this._lastBucket = computeRefreshBucket(this._config.refresh_seconds, nowMs);
-        this._lastRequestedUrl = imageUrl;
-        this._lastFetchAt = nowMs;
         this._setError("");
-        this._image.style.objectFit = this._config.fit;
-
-        const response = await fetch(imageUrl, {
+        const statusResponse = await fetch(buildStatusUrl(this._config, measuredWidth, measuredHeight), {
           headers: {
             Authorization: getAuthorizationHeader(this._hass),
           },
+          cache: "no-store",
         });
 
-        if (!response.ok) {
-          console.warn("Grafana Image render request failed", {
-            status: response.status,
-            url: imageUrl,
+        if (!statusResponse.ok) {
+          console.warn("Grafana Image status request failed", {
+            status: statusResponse.status,
           });
-          throw new Error(`Render request failed with status ${response.status}`);
+          throw new Error(`Status request failed with status ${statusResponse.status}`);
         }
 
-        const blob = await response.blob();
+        const status = await statusResponse.json();
         if (requestId !== this._loadRequestId) {
           return;
         }
 
-        this._revokeImageUrl();
-        this._imageUrl = URL.createObjectURL(blob);
-        this._image.src = this._imageUrl;
+        this._lastBucket = nextBucket;
+        this._setStatus(status.status === "ready" ? "" : (status.message || ""));
+        if (status.status === "error" && !status.has_cached_image) {
+          this._setError(status.message || "Grafana image failed to load");
+        }
+
+        if (status.has_cached_image && status.cache_token) {
+          await this._loadCachedImage(requestId, status.cache_token, measuredWidth, measuredHeight, nowMs);
+        } else {
+          this._revokeImageUrl();
+          this._image.removeAttribute("src");
+        }
+
+        this._scheduleStatusPoll(status);
       } catch (_error) {
         if (requestId !== this._loadRequestId) {
           return;
@@ -373,10 +421,52 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
           dashboard_uid: this._config.dashboard_uid,
           panel_id: this._config.panel_id,
         });
+        this._lastRequestedUrl = undefined;
+        this._lastFetchAt = 0;
+        this._setStatus("");
         this._revokeImageUrl();
         this._image.removeAttribute("src");
         this._setError("Grafana image failed to load");
+        this._statusPollTimer = setTimeout(() => {
+          this._statusPollTimer = undefined;
+          this._updateImage(true);
+        }, 5000);
       }
+    }
+
+    async _loadCachedImage(requestId, cacheToken, measuredWidth, measuredHeight, nowMs) {
+      const imageUrl = buildImageUrl(this._config, cacheToken, measuredWidth, measuredHeight);
+      if (!shouldFetchImage(imageUrl, this._lastRequestedUrl, this._lastFetchAt, nowMs)) {
+        return;
+      }
+
+      this._lastRequestedUrl = imageUrl;
+      this._lastFetchAt = nowMs;
+      this._image.style.objectFit = this._config.fit;
+
+      const response = await fetch(imageUrl, {
+        headers: {
+          Authorization: getAuthorizationHeader(this._hass),
+        },
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        console.warn("Grafana Image cached image request failed", {
+          status: response.status,
+          url: imageUrl,
+        });
+        throw new Error(`Cached image request failed with status ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      if (requestId !== this._loadRequestId) {
+        return;
+      }
+
+      this._revokeImageUrl();
+      this._imageUrl = URL.createObjectURL(blob);
+      this._image.src = this._imageUrl;
     }
 
     _setError(message) {
@@ -386,6 +476,15 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
       this._error.textContent = message;
       this._error.hidden = !message;
+    }
+
+    _setStatus(message) {
+      if (!this._status) {
+        return;
+      }
+
+      this._status.textContent = message;
+      this._status.hidden = !message;
     }
 
     _revokeImageUrl() {
@@ -416,7 +515,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         this._renderWidth = width;
         this._renderHeight = height;
         if (this._config && this._image) {
-          this._updateImage();
+          this._updateImage(true);
         }
       });
 
@@ -437,6 +536,28 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         width: Math.round(rect?.width || 0) || undefined,
         height: Math.round(rect?.height || 0) || undefined,
       };
+    }
+
+    _scheduleStatusPoll(status) {
+      this._clearStatusPoll();
+      if (!status || status.status === "ready") {
+        return;
+      }
+
+      const pollAfterMs = Math.max(500, Number(status.poll_after_ms) || 2000);
+      this._statusPollTimer = setTimeout(() => {
+        this._statusPollTimer = undefined;
+        this._updateImage(true);
+      }, pollAfterMs);
+    }
+
+    _clearStatusPoll() {
+      if (!this._statusPollTimer) {
+        return;
+      }
+
+      clearTimeout(this._statusPollTimer);
+      this._statusPollTimer = undefined;
     }
   }
 

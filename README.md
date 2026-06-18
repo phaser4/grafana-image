@@ -4,6 +4,8 @@ Grafana Image is a Home Assistant custom integration and Lovelace custom card fo
 
 The browser never calls Grafana directly. Instead, the Lovelace card requests the image from a Home Assistant backend endpoint, and Home Assistant proxies the request to Grafana. This keeps Grafana credentials server-side.
 
+Rendered images are now produced by a single background worker and kept in backend memory. The card first asks the backend for cache or queue status, then loads the cached PNG when one is available.
+
 ## Requirements
 
 - Home Assistant with support for custom integrations
@@ -42,7 +44,7 @@ grafana_image:
 | `url` | yes | none | Base Grafana URL reachable from Home Assistant |
 | `api_token` | no | none | Bearer token for Grafana API access |
 | `cache_seconds` | no | `60` | In-memory cache duration for rendered PNGs |
-| `max_concurrent_renders` | no | `2` | Global limit for simultaneous upstream Grafana render requests |
+| `max_concurrent_renders` | no | `2` | Retained for backward compatibility; renders are currently processed one at a time by the background worker |
 | `timeout_seconds` | no | `20` | Timeout for upstream Grafana render requests |
 
 ### How to get a Grafana token
@@ -140,15 +142,27 @@ fit: contain
 
 ## How It Works
 
-The card requests:
+The card first requests status:
+
+```text
+/api/grafana_image/status?dashboard_uid=...&panel_id=...&from=...&to=...
+```
+
+The backend then:
+
+- checks whether a recent cached PNG already exists
+- returns `ready`, `stale`, `queued`, `rendering`, or `error`
+- queues the render key for the single background worker when a refresh is needed
+
+When a cached PNG is available, the card then requests:
 
 ```text
 /api/grafana_image/render?dashboard_uid=...&panel_id=...&from=...&to=...
 ```
 
-Home Assistant then calls Grafana using the configured base URL and optional bearer token, requests the rendered PNG, and returns the image to the card.
+The render endpoint serves only cached PNGs. It does not do long synchronous Grafana renders on cache miss anymore.
 
-Successful PNG responses are cached in memory based on the effective render parameters.
+Successful PNG responses are cached in memory based on the effective render parameters. If a stale image exists, the card keeps showing it while the worker refreshes it in the background. If no recent cached image exists, the card shows that rendering is queued.
 
 The card reports Lovelace grid sizing through `columns` and `rows`, with defaults of a full-width `12 x 3` card. It then measures the actual rendered image area inside the card and asks Grafana for a PNG at that exact width and height, so the image matches the displayed card size without browser-side upscaling or downscaling.
 
@@ -179,7 +193,7 @@ If Grafana works in a browser but not through Home Assistant, the hostname is of
 If renders are slow:
 
 - increase `timeout_seconds`
-- lower `max_concurrent_renders` if the renderer gets overloaded
+- remember the integration now renders one image at a time in the background
 - lower the refresh frequency
 - reduce `rows` or the section width
 - verify that Grafana rendering is healthy

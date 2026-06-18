@@ -2,33 +2,29 @@
 
 from __future__ import annotations
 
-import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
-from aiohttp import ClientError
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
-    CONF_API_TOKEN,
-    CONF_CACHE_SECONDS,
-    CONF_TIMEOUT_SECONDS,
-    CONF_URL,
     DATA_CACHE,
-    DATA_CONFIG,
-    DATA_FETCH_LOCKS,
-    DATA_RENDER_SEMAPHORE,
+    DATA_QUEUED_KEYS,
+    DATA_RENDER_EVENT,
+    DATA_RENDER_QUEUE,
+    DATA_RENDER_STATES,
     DOMAIN,
     RENDER_PATH,
+    STATUS_PATH,
     STATIC_PATH,
 )
 from .runtime import (
     QueryValidationError,
-    build_cache_entry,
+    RenderState,
     build_cache_key,
-    build_grafana_render_url,
+    cache_entry_is_fresh,
     cache_entry_is_valid,
     parse_render_request,
 )
@@ -37,20 +33,17 @@ FRONTEND_FILE = Path(__file__).parent / "frontend" / "grafana-image-card.js"
 
 
 class GrafanaImageRenderView(HomeAssistantView):
-    """Render Grafana panels as PNG images."""
+    """Serve cached Grafana panel PNG images."""
 
     url = RENDER_PATH
     name = "api:grafana_image:render"
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
-        """Fetch a Grafana rendered panel image through Home Assistant."""
+        """Return a cached Grafana rendered panel image when available."""
         hass: HomeAssistant = request.app["hass"]
         runtime = hass.data[DOMAIN]
-        config = runtime[DATA_CONFIG]
         cache = runtime[DATA_CACHE]
-        fetch_locks = runtime[DATA_FETCH_LOCKS]
-        render_semaphore = runtime[DATA_RENDER_SEMAPHORE]
 
         try:
             params = parse_render_request(request.query)
@@ -65,56 +58,52 @@ class GrafanaImageRenderView(HomeAssistantView):
                 content_type=cached_entry.content_type,
             )
 
-        fetch_lock = fetch_locks.setdefault(cache_key, asyncio.Lock())
-        async with fetch_lock:
-            cached_entry = cache.get(cache_key)
-            if cached_entry and cache_entry_is_valid(cached_entry):
-                return web.Response(
-                    body=cached_entry.content,
-                    content_type=cached_entry.content_type,
-                )
+        return _json_error("Grafana image render is queued", 404)
 
-            render_url = build_grafana_render_url(config[CONF_URL], params)
-            headers = {}
-            if config.get(CONF_API_TOKEN):
-                headers["Authorization"] = f"Bearer {config[CONF_API_TOKEN]}"
 
-            session = async_get_clientsession(hass)
+class GrafanaImageStatusView(HomeAssistantView):
+    """Report queue and cache status for one Grafana panel render key."""
 
-            try:
-                async with render_semaphore:
-                    async with asyncio.timeout(config[CONF_TIMEOUT_SECONDS]):
-                        async with session.get(render_url, headers=headers) as response:
-                            content = await response.read()
-                            content_type = response.headers.get("Content-Type", "").split(";")[0]
+    url = STATUS_PATH
+    name = "api:grafana_image:status"
+    requires_auth = True
 
-                            if response.status != 200:
-                                detail = _decode_error_body(content)
-                                return _json_error(
-                                    f"Grafana render failed with status {response.status}: {detail}",
-                                    502,
-                                )
+    async def get(self, request: web.Request) -> web.Response:
+        """Register render demand and return current status."""
+        hass: HomeAssistant = request.app["hass"]
+        runtime = hass.data[DOMAIN]
 
-                            if content_type.lower() != "image/png":
-                                return _json_error(
-                                    (
-                                        "Grafana render returned unexpected content type: "
-                                        f"{content_type or 'unknown'}"
-                                    ),
-                                    502,
-                                )
-            except TimeoutError:
-                return _json_error("Grafana render request timed out", 504)
-            except ClientError as err:
-                return _json_error(f"Grafana render request failed: {err}", 502)
-            except Exception as err:  # pragma: no cover - defensive guard
-                return _json_error(f"Unexpected internal error: {err}", 500)
+        try:
+            params = parse_render_request(request.query)
+        except QueryValidationError as err:
+            return _json_error(str(err), 400)
 
-            cache_seconds = config[CONF_CACHE_SECONDS]
-            if cache_seconds > 0:
-                cache[cache_key] = build_cache_entry(content, content_type, cache_seconds)
+        cache_key = build_cache_key(params)
+        state = runtime[DATA_RENDER_STATES].setdefault(cache_key, RenderState())
+        now = datetime.now(UTC)
+        state.last_requested_at = now
 
-            return web.Response(body=content, content_type=content_type)
+        cache_entry = runtime[DATA_CACHE].get(cache_key)
+        if cache_entry and not cache_entry_is_valid(cache_entry, now=now):
+            runtime[DATA_CACHE].pop(cache_key, None)
+            cache_entry = None
+
+        if not cache_entry or not cache_entry_is_fresh(cache_entry, now=now):
+            _enqueue_render(runtime, cache_key, params, state, now)
+
+        status = _resolve_status(cache_entry, state, now)
+        return web.json_response(
+            {
+                "status": status,
+                "message": _build_status_message(status, state),
+                "has_cached_image": bool(cache_entry),
+                "is_stale": bool(cache_entry) and not cache_entry_is_fresh(cache_entry, now=now),
+                "cache_token": cache_entry.rendered_at.isoformat() if cache_entry else None,
+                "last_rendered_at": cache_entry.rendered_at.isoformat() if cache_entry else None,
+                "last_error": state.last_error,
+                "poll_after_ms": _resolve_poll_after_ms(status, params["refresh_seconds"]),
+            }
+        )
 
 
 class GrafanaImageStaticView(HomeAssistantView):
@@ -135,6 +124,7 @@ class GrafanaImageStaticView(HomeAssistantView):
 def async_register_views(hass: HomeAssistant) -> None:
     """Register HTTP views for the integration."""
     hass.http.register_view(GrafanaImageRenderView())
+    hass.http.register_view(GrafanaImageStatusView())
     hass.http.register_view(GrafanaImageStaticView())
 
 
@@ -143,7 +133,56 @@ def _json_error(message: str, status: int) -> web.Response:
     return web.json_response({"message": message, "domain": DOMAIN}, status=status)
 
 
-def _decode_error_body(content: bytes) -> str:
-    """Decode upstream error content for diagnostics."""
-    decoded = content.decode("utf-8", errors="replace").strip()
-    return decoded or "no response body"
+def _enqueue_render(
+    runtime: dict,
+    cache_key: tuple,
+    params: dict[str, object],
+    state,
+    now: datetime,
+) -> None:
+    """Queue a render key once if it is not already queued or running."""
+    if state.is_queued or state.is_rendering or cache_key in runtime[DATA_QUEUED_KEYS]:
+        return
+
+    runtime[DATA_RENDER_QUEUE].append((cache_key, params))
+    runtime[DATA_QUEUED_KEYS].add(cache_key)
+    runtime[DATA_RENDER_EVENT].set()
+    state.is_queued = True
+    state.queued_at = now
+
+
+def _resolve_status(cache_entry, state, now: datetime) -> str:
+    """Resolve frontend status for a render key."""
+    if cache_entry and cache_entry_is_fresh(cache_entry, now=now):
+        return "ready"
+    if cache_entry:
+        return "stale"
+    if state.is_rendering:
+        return "rendering"
+    if state.is_queued:
+        return "queued"
+    if state.last_error:
+        return "error"
+    return "queued"
+
+
+def _resolve_poll_after_ms(status: str, refresh_seconds: int) -> int:
+    """Suggest a frontend poll interval for this status."""
+    if status == "ready":
+        return max(1000, int(refresh_seconds) * 1000)
+    if status == "error":
+        return 5000
+    return 2000
+
+
+def _build_status_message(status: str, state) -> str:
+    """Build a user-facing status message."""
+    if status == "stale":
+        return "Refreshing image..."
+    if status == "rendering":
+        return "Rendering image..."
+    if status == "queued":
+        return "Image render queued"
+    if status == "error":
+        return state.last_error or "Grafana image failed to load"
+    return ""

@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 
 const {
   buildImageUrl,
+  buildStatusUrl,
   computeCardSize,
   computeRefreshBucket,
   GRID_COLUMN_COUNT,
@@ -58,8 +59,8 @@ run("computeRefreshBucket buckets by refresh interval", () => {
   assert.equal(computeRefreshBucket(60, 120000), 2);
 });
 
-run("buildImageUrl encodes backend parameters", () => {
-  const url = buildImageUrl(
+run("buildStatusUrl encodes backend parameters", () => {
+  const url = buildStatusUrl(
     {
       dashboard_uid: "aquarium",
       panel_id: 4,
@@ -70,19 +71,42 @@ run("buildImageUrl encodes backend parameters", () => {
       rows: 6,
       refresh_seconds: 30,
     },
-    60000,
     512,
     284,
   );
 
-  assert.match(url, /^\/api\/grafana_image\/render\?/);
+  assert.match(url, /^\/api\/grafana_image\/status\?/);
   assert.match(url, /dashboard_uid=aquarium/);
   assert.match(url, /panel_id=4/);
   assert.match(url, /from=now-24h/);
   assert.match(url, /to=now/);
   assert.match(url, /width=512/);
   assert.match(url, /height=284/);
-  assert.match(url, /t=2/);
+  assert.match(url, /refresh_seconds=30/);
+});
+
+run("buildImageUrl appends cache token for ready image fetches", () => {
+  const url = buildImageUrl(
+    {
+      dashboard_uid: "aquarium",
+      panel_id: 4,
+      from: "now-24h",
+      to: "now",
+      width: 1024,
+      rows: 6,
+      refresh_seconds: 30,
+    },
+    "2026-01-01T00:00:00+00:00",
+    512,
+    284,
+  );
+
+  assert.match(url, /^\/api\/grafana_image\/render\?/);
+  assert.match(url, /dashboard_uid=aquarium/);
+  assert.match(url, /width=512/);
+  assert.match(url, /height=284/);
+  assert.match(url, /refresh_seconds=30/);
+  assert.match(url, /v=2026-01-01T00%3A00%3A00%2B00%3A00/);
 });
 
 run("shouldFetchImage allows first fetch", () => {

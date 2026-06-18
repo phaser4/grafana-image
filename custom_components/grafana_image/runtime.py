@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
@@ -21,6 +22,7 @@ DEFAULT_ORG_ID = 1
 DEFAULT_THEME = "dark"
 DEFAULT_WIDTH = 900
 DEFAULT_HEIGHT = 320
+DEFAULT_REFRESH_SECONDS = 60
 
 REQUIRED_QUERY_PARAMS = ("dashboard_uid", "panel_id", "from", "to")
 CACHE_KEY_FIELDS = (
@@ -45,8 +47,23 @@ class CacheEntry:
     """Cached PNG response metadata."""
 
     expires_at: datetime
+    fresh_until: datetime
+    rendered_at: datetime
     content: bytes
     content_type: str
+
+
+@dataclass(slots=True)
+class RenderState:
+    """Queue and render status for one cache key."""
+
+    is_queued: bool = False
+    is_rendering: bool = False
+    last_requested_at: datetime | None = None
+    queued_at: datetime | None = None
+    rendering_started_at: datetime | None = None
+    last_completed_at: datetime | None = None
+    last_error: str | None = None
 
 
 def build_runtime_state(config: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -54,7 +71,10 @@ def build_runtime_state(config: Mapping[str, Any] | None) -> dict[str, Any]:
     return {
         "config": normalize_integration_config(config),
         "cache": {},
-        "fetch_locks": {},
+        "render_states": {},
+        "render_queue": deque(),
+        "queued_keys": set(),
+        "render_event": None,
     }
 
 
@@ -96,6 +116,9 @@ def parse_render_request(query: Mapping[str, str]) -> dict[str, Any]:
         "theme": theme,
         "width": _parse_positive_int("width", query.get("width", DEFAULT_WIDTH)),
         "height": _parse_positive_int("height", query.get("height", DEFAULT_HEIGHT)),
+        "refresh_seconds": _parse_positive_int(
+            "refresh_seconds", query.get("refresh_seconds", DEFAULT_REFRESH_SECONDS)
+        ),
     }
 
 
@@ -126,12 +149,19 @@ def build_cache_key(params: Mapping[str, Any]) -> tuple[Any, ...]:
 
 
 def build_cache_entry(
-    content: bytes, content_type: str, cache_seconds: int, now: datetime | None = None
+    content: bytes,
+    content_type: str,
+    cache_seconds: int,
+    refresh_seconds: int,
+    now: datetime | None = None,
 ) -> CacheEntry:
     """Create a cache entry for a successful PNG response."""
     timestamp = now or datetime.now(UTC)
+    retention_seconds = max(cache_seconds, refresh_seconds)
     return CacheEntry(
-        expires_at=timestamp + timedelta(seconds=cache_seconds),
+        expires_at=timestamp + timedelta(seconds=retention_seconds),
+        fresh_until=timestamp + timedelta(seconds=refresh_seconds),
+        rendered_at=timestamp,
         content=content,
         content_type=content_type,
     )
@@ -141,6 +171,12 @@ def cache_entry_is_valid(entry: CacheEntry, now: datetime | None = None) -> bool
     """Return whether a cache entry is still valid."""
     timestamp = now or datetime.now(UTC)
     return entry.expires_at > timestamp
+
+
+def cache_entry_is_fresh(entry: CacheEntry, now: datetime | None = None) -> bool:
+    """Return whether a cache entry is still fresh enough for direct use."""
+    timestamp = now or datetime.now(UTC)
+    return entry.fresh_until > timestamp
 
 
 def _parse_positive_int(name: str, value: Any) -> int:

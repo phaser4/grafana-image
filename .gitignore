@@ -1,3 +1,5 @@
 Spec.md
 Technical Details.md
 Other.md
+__pycache__/
+*.pyc

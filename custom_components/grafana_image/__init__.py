@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 import logging
 
 from aiohttp import ClientError
@@ -20,10 +21,15 @@ from .const import (
     DEFAULT_CACHE_SECONDS,
     DEFAULT_MAX_CONCURRENT_RENDERS,
     DEFAULT_TIMEOUT_SECONDS,
-    DATA_RENDER_SEMAPHORE,
+    DATA_CACHE,
+    DATA_QUEUED_KEYS,
+    DATA_RENDER_EVENT,
+    DATA_RENDER_QUEUE,
+    DATA_RENDER_STATES,
+    DATA_RENDER_TASK,
     DOMAIN,
 )
-from .runtime import build_runtime_state
+from .runtime import RenderState, build_cache_entry, build_grafana_render_url, build_runtime_state
 from .views import async_register_views
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,13 +60,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Grafana Image integration from YAML."""
     hass.data[DOMAIN] = build_runtime_state(config.get(DOMAIN))
     runtime_config = hass.data[DOMAIN]["config"]
-    hass.data[DOMAIN][DATA_RENDER_SEMAPHORE] = asyncio.Semaphore(
-        runtime_config[CONF_MAX_CONCURRENT_RENDERS]
-    )
+    hass.data[DOMAIN][DATA_RENDER_EVENT] = asyncio.Event()
     async_register_views(hass)
 
     _LOGGER.info(
-        "Grafana Image backend started for %s (token configured: %s, cache_seconds: %s, max_concurrent_renders: %s, timeout_seconds: %s)",
+        "Grafana Image backend started for %s (token configured: %s, cache_seconds: %s, max_concurrent_renders: %s, timeout_seconds: %s, worker_concurrency: 1)",
         runtime_config[CONF_URL],
         bool(runtime_config.get(CONF_API_TOKEN)),
         runtime_config[CONF_CACHE_SECONDS],
@@ -68,6 +72,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         runtime_config[CONF_TIMEOUT_SECONDS],
     )
     hass.async_create_task(_async_probe_grafana(hass))
+    hass.data[DOMAIN][DATA_RENDER_TASK] = hass.async_create_task(_async_render_worker(hass))
     return True
 
 
@@ -114,3 +119,83 @@ async def _async_probe_grafana(hass: HomeAssistant) -> None:
             probe_url,
             err,
         )
+
+
+async def _async_render_worker(hass: HomeAssistant) -> None:
+    """Process queued render jobs one at a time."""
+    runtime = hass.data[DOMAIN]
+    queue = runtime[DATA_RENDER_QUEUE]
+    render_event = runtime[DATA_RENDER_EVENT]
+
+    while True:
+        await render_event.wait()
+
+        while True:
+            if not queue:
+                render_event.clear()
+                if not queue:
+                    break
+                render_event.set()
+                continue
+
+            cache_key, params = queue.popleft()
+            runtime[DATA_QUEUED_KEYS].discard(cache_key)
+            state = runtime[DATA_RENDER_STATES].setdefault(cache_key, RenderState())
+            state.is_queued = False
+            state.queued_at = None
+            state.is_rendering = True
+            state.rendering_started_at = datetime.now(UTC)
+
+            try:
+                content, content_type = await _async_fetch_rendered_image(hass, params)
+            except TimeoutError:
+                state.last_error = "Grafana render request timed out"
+                _LOGGER.warning("Grafana Image queued render timed out for %s", cache_key)
+            except ClientError as err:
+                state.last_error = f"Grafana render request failed: {err}"
+                _LOGGER.warning("Grafana Image queued render failed for %s: %s", cache_key, err)
+            except Exception as err:  # pragma: no cover - defensive logging
+                state.last_error = f"Unexpected internal error: {err}"
+                _LOGGER.exception("Grafana Image queued render failed unexpectedly for %s", cache_key)
+            else:
+                runtime[DATA_CACHE][cache_key] = build_cache_entry(
+                    content,
+                    content_type,
+                    runtime["config"][CONF_CACHE_SECONDS],
+                    params["refresh_seconds"],
+                )
+                state.last_error = None
+                state.last_completed_at = datetime.now(UTC)
+            finally:
+                state.is_rendering = False
+
+
+async def _async_fetch_rendered_image(
+    hass: HomeAssistant, params: dict[str, object]
+) -> tuple[bytes, str]:
+    """Fetch one rendered PNG from Grafana."""
+    runtime_config = hass.data[DOMAIN]["config"]
+    render_url = build_grafana_render_url(runtime_config[CONF_URL], params)
+    headers = {}
+    if runtime_config.get(CONF_API_TOKEN):
+        headers["Authorization"] = f"Bearer {runtime_config[CONF_API_TOKEN]}"
+
+    session = async_get_clientsession(hass)
+    async with asyncio.timeout(runtime_config[CONF_TIMEOUT_SECONDS]):
+        async with session.get(render_url, headers=headers) as response:
+            content = await response.read()
+            content_type = response.headers.get("Content-Type", "").split(";")[0]
+
+            if response.status != 200:
+                body = content.decode("utf-8", errors="replace").strip() or "no response body"
+                raise ClientError(
+                    f"Grafana render failed with status {response.status}: {body}"
+                )
+
+            if content_type.lower() != "image/png":
+                raise ClientError(
+                    "Grafana render returned unexpected content type: "
+                    f"{content_type or 'unknown'}"
+                )
+
+            return content, content_type
