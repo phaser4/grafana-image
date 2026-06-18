@@ -3,9 +3,11 @@ const assert = require("node:assert/strict");
 const {
   buildImageUrl,
   computeRefreshBucket,
+  MIN_FETCH_INTERVAL_MS,
   getAuthorizationHeader,
   normalizeConfig,
   resolveRenderDimensions,
+  shouldFetchImage,
   validateRequiredConfig,
 } = require("../../custom_components/grafana_image/frontend/grafana-image-card.js");
 
@@ -72,6 +74,31 @@ run("buildImageUrl encodes backend parameters", () => {
   assert.match(url, /width=512/);
   assert.match(url, /height=480/);
   assert.match(url, /t=2/);
+});
+
+run("shouldFetchImage allows first fetch", () => {
+  assert.equal(shouldFetchImage("/api/grafana_image/render?t=1", undefined, 0, 5000), true);
+});
+
+run("shouldFetchImage blocks duplicate url inside min interval", () => {
+  assert.equal(
+    shouldFetchImage("/api/grafana_image/render?t=1", "/api/grafana_image/render?t=1", 1000, 1000 + MIN_FETCH_INTERVAL_MS - 1),
+    false,
+  );
+});
+
+run("shouldFetchImage allows duplicate url after min interval", () => {
+  assert.equal(
+    shouldFetchImage("/api/grafana_image/render?t=1", "/api/grafana_image/render?t=1", 1000, 1000 + MIN_FETCH_INTERVAL_MS),
+    true,
+  );
+});
+
+run("shouldFetchImage allows changed url immediately", () => {
+  assert.equal(
+    shouldFetchImage("/api/grafana_image/render?t=2", "/api/grafana_image/render?t=1", 1000, 1001),
+    true,
+  );
 });
 
 run("resolveRenderDimensions uses card width and configured height", () => {

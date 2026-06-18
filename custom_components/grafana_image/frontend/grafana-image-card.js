@@ -7,6 +7,7 @@ const DEFAULT_CONFIG = {
   refresh_seconds: 60,
   fit: "contain",
 };
+const MIN_FETCH_INTERVAL_MS = 10000;
 
 function validateRequiredConfig(config) {
   const requiredFields = ["dashboard_uid", "panel_id", "from", "to"];
@@ -64,6 +65,18 @@ function buildImageUrl(config, nowMs = Date.now(), measuredWidth) {
   return `${url.pathname}${url.search}`;
 }
 
+function shouldFetchImage(nextUrl, lastUrl, lastFetchAt, nowMs = Date.now(), minIntervalMs = MIN_FETCH_INTERVAL_MS) {
+  if (!nextUrl) {
+    return false;
+  }
+
+  if (!lastUrl || nextUrl !== lastUrl) {
+    return true;
+  }
+
+  return nowMs - lastFetchAt >= minIntervalMs;
+}
+
 function getAuthorizationHeader(hass) {
   const token = hass?.auth?.data?.access_token ?? hass?.auth?.data?.accessToken;
   if (!token) {
@@ -76,11 +89,13 @@ function getAuthorizationHeader(hass) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_CONFIG,
+    MIN_FETCH_INTERVAL_MS,
     buildImageUrl,
     computeRefreshBucket,
     getAuthorizationHeader,
     normalizeConfig,
     resolveRenderDimensions,
+    shouldFetchImage,
     validateRequiredConfig,
   };
 }
@@ -100,6 +115,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._loadRequestId = 0;
       this._resizeObserver = undefined;
       this._renderWidth = undefined;
+      this._lastRequestedUrl = undefined;
+      this._lastFetchAt = 0;
     }
 
     setConfig(config) {
@@ -213,18 +230,25 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         return;
       }
 
-      const requestId = ++this._loadRequestId;
-      this._lastBucket = computeRefreshBucket(this._config.refresh_seconds);
-      this._setError("");
-      this._image.style.objectFit = this._config.fit;
-
       try {
         const measuredWidth = this._getMeasuredWidth();
         if (!measuredWidth) {
           return;
         }
 
-        const imageUrl = buildImageUrl(this._config, Date.now(), measuredWidth);
+        const nowMs = Date.now();
+        const imageUrl = buildImageUrl(this._config, nowMs, measuredWidth);
+        if (!shouldFetchImage(imageUrl, this._lastRequestedUrl, this._lastFetchAt, nowMs)) {
+          return;
+        }
+
+        const requestId = ++this._loadRequestId;
+        this._lastBucket = computeRefreshBucket(this._config.refresh_seconds, nowMs);
+        this._lastRequestedUrl = imageUrl;
+        this._lastFetchAt = nowMs;
+        this._setError("");
+        this._image.style.objectFit = this._config.fit;
+
         const response = await fetch(imageUrl, {
           headers: {
             Authorization: getAuthorizationHeader(this._hass),
