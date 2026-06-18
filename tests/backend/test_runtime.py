@@ -37,7 +37,18 @@ class NormalizeIntegrationConfigTests(unittest.TestCase):
         self.assertEqual(config["url"], "http://grafana.local:3000")
         self.assertIsNone(config["api_token"])
         self.assertEqual(config["cache_seconds"], 60)
+        self.assertEqual(config["max_concurrent_renders"], 2)
         self.assertEqual(config["timeout_seconds"], 20)
+
+    def test_applies_custom_concurrency_limit(self):
+        config = runtime.normalize_integration_config(
+            {
+                "url": "http://grafana.local:3000/",
+                "max_concurrent_renders": 4,
+            }
+        )
+
+        self.assertEqual(config["max_concurrent_renders"], 4)
 
 
 class ParseRenderRequestTests(unittest.TestCase):

@@ -14,10 +14,13 @@ import voluptuous as vol
 from .const import (
     CONF_API_TOKEN,
     CONF_CACHE_SECONDS,
+    CONF_MAX_CONCURRENT_RENDERS,
     CONF_TIMEOUT_SECONDS,
     CONF_URL,
     DEFAULT_CACHE_SECONDS,
+    DEFAULT_MAX_CONCURRENT_RENDERS,
     DEFAULT_TIMEOUT_SECONDS,
+    DATA_RENDER_SEMAPHORE,
     DOMAIN,
 )
 from .runtime import build_runtime_state
@@ -35,6 +38,9 @@ CONFIG_SCHEMA = vol.Schema(
                     CONF_CACHE_SECONDS, default=DEFAULT_CACHE_SECONDS
                 ): cv.positive_int,
                 vol.Optional(
+                    CONF_MAX_CONCURRENT_RENDERS, default=DEFAULT_MAX_CONCURRENT_RENDERS
+                ): cv.positive_int,
+                vol.Optional(
                     CONF_TIMEOUT_SECONDS, default=DEFAULT_TIMEOUT_SECONDS
                 ): cv.positive_int,
             }
@@ -47,14 +53,18 @@ CONFIG_SCHEMA = vol.Schema(
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Grafana Image integration from YAML."""
     hass.data[DOMAIN] = build_runtime_state(config.get(DOMAIN))
-    async_register_views(hass)
     runtime_config = hass.data[DOMAIN]["config"]
+    hass.data[DOMAIN][DATA_RENDER_SEMAPHORE] = asyncio.Semaphore(
+        runtime_config[CONF_MAX_CONCURRENT_RENDERS]
+    )
+    async_register_views(hass)
 
     _LOGGER.info(
-        "Grafana Image backend started for %s (token configured: %s, cache_seconds: %s, timeout_seconds: %s)",
+        "Grafana Image backend started for %s (token configured: %s, cache_seconds: %s, max_concurrent_renders: %s, timeout_seconds: %s)",
         runtime_config[CONF_URL],
         bool(runtime_config.get(CONF_API_TOKEN)),
         runtime_config[CONF_CACHE_SECONDS],
+        runtime_config[CONF_MAX_CONCURRENT_RENDERS],
         runtime_config[CONF_TIMEOUT_SECONDS],
     )
     hass.async_create_task(_async_probe_grafana(hass))

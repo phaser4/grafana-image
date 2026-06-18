@@ -10,9 +10,11 @@ from urllib.parse import quote, urlencode
 CONF_URL = "url"
 CONF_API_TOKEN = "api_token"
 CONF_CACHE_SECONDS = "cache_seconds"
+CONF_MAX_CONCURRENT_RENDERS = "max_concurrent_renders"
 CONF_TIMEOUT_SECONDS = "timeout_seconds"
 
 DEFAULT_CACHE_SECONDS = 60
+DEFAULT_MAX_CONCURRENT_RENDERS = 2
 DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_SLUG = "_"
 DEFAULT_ORG_ID = 1
@@ -63,6 +65,9 @@ def normalize_integration_config(config: Mapping[str, Any] | None) -> dict[str, 
         CONF_URL: str(raw.get(CONF_URL, "")).rstrip("/"),
         CONF_API_TOKEN: raw.get(CONF_API_TOKEN) or None,
         CONF_CACHE_SECONDS: int(raw.get(CONF_CACHE_SECONDS, DEFAULT_CACHE_SECONDS)),
+        CONF_MAX_CONCURRENT_RENDERS: int(
+            raw.get(CONF_MAX_CONCURRENT_RENDERS, DEFAULT_MAX_CONCURRENT_RENDERS)
+        ),
         CONF_TIMEOUT_SECONDS: int(raw.get(CONF_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS)),
     }
 

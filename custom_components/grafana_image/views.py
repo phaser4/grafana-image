@@ -19,6 +19,7 @@ from .const import (
     DATA_CACHE,
     DATA_CONFIG,
     DATA_FETCH_LOCKS,
+    DATA_RENDER_SEMAPHORE,
     DOMAIN,
     RENDER_PATH,
     STATIC_PATH,
@@ -49,6 +50,7 @@ class GrafanaImageRenderView(HomeAssistantView):
         config = runtime[DATA_CONFIG]
         cache = runtime[DATA_CACHE]
         fetch_locks = runtime[DATA_FETCH_LOCKS]
+        render_semaphore = runtime[DATA_RENDER_SEMAPHORE]
 
         try:
             params = parse_render_request(request.query)
@@ -80,26 +82,27 @@ class GrafanaImageRenderView(HomeAssistantView):
             session = async_get_clientsession(hass)
 
             try:
-                async with asyncio.timeout(config[CONF_TIMEOUT_SECONDS]):
-                    async with session.get(render_url, headers=headers) as response:
-                        content = await response.read()
-                        content_type = response.headers.get("Content-Type", "").split(";")[0]
+                async with render_semaphore:
+                    async with asyncio.timeout(config[CONF_TIMEOUT_SECONDS]):
+                        async with session.get(render_url, headers=headers) as response:
+                            content = await response.read()
+                            content_type = response.headers.get("Content-Type", "").split(";")[0]
 
-                        if response.status != 200:
-                            detail = _decode_error_body(content)
-                            return _json_error(
-                                f"Grafana render failed with status {response.status}: {detail}",
-                                502,
-                            )
+                            if response.status != 200:
+                                detail = _decode_error_body(content)
+                                return _json_error(
+                                    f"Grafana render failed with status {response.status}: {detail}",
+                                    502,
+                                )
 
-                        if content_type.lower() != "image/png":
-                            return _json_error(
-                                (
-                                    "Grafana render returned unexpected content type: "
-                                    f"{content_type or 'unknown'}"
-                                ),
-                                502,
-                            )
+                            if content_type.lower() != "image/png":
+                                return _json_error(
+                                    (
+                                        "Grafana render returned unexpected content type: "
+                                        f"{content_type or 'unknown'}"
+                                    ),
+                                    502,
+                                )
             except TimeoutError:
                 return _json_error("Grafana render request timed out", 504)
             except ClientError as err:

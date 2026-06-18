@@ -5,9 +5,11 @@ DOMAIN = "grafana_image"
 CONF_URL = "url"
 CONF_API_TOKEN = "api_token"
 CONF_CACHE_SECONDS = "cache_seconds"
+CONF_MAX_CONCURRENT_RENDERS = "max_concurrent_renders"
 CONF_TIMEOUT_SECONDS = "timeout_seconds"
 
 DEFAULT_CACHE_SECONDS = 60
+DEFAULT_MAX_CONCURRENT_RENDERS = 2
 DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_SLUG = "_"
 DEFAULT_ORG_ID = 1
@@ -20,6 +22,7 @@ DEFAULT_FIT = "contain"
 DATA_CONFIG = "config"
 DATA_CACHE = "cache"
 DATA_FETCH_LOCKS = "fetch_locks"
+DATA_RENDER_SEMAPHORE = "render_semaphore"
 
 RENDER_PATH = "/api/grafana_image/render"
 STATIC_PATH = "/api/grafana_image/static/grafana-image-card.js"

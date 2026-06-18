@@ -31,6 +31,7 @@ grafana_image:
   url: "http://grafana.local:3000"
   api_token: !secret grafana_api_token
   cache_seconds: 60
+  max_concurrent_renders: 2
   timeout_seconds: 20
 ```
 
@@ -41,6 +42,7 @@ grafana_image:
 | `url` | yes | none | Base Grafana URL reachable from Home Assistant |
 | `api_token` | no | none | Bearer token for Grafana API access |
 | `cache_seconds` | no | `60` | In-memory cache duration for rendered PNGs |
+| `max_concurrent_renders` | no | `2` | Global limit for simultaneous upstream Grafana render requests |
 | `timeout_seconds` | no | `20` | Timeout for upstream Grafana render requests |
 
 ### How to get a Grafana token
@@ -177,6 +179,7 @@ If Grafana works in a browser but not through Home Assistant, the hostname is of
 If renders are slow:
 
 - increase `timeout_seconds`
+- lower `max_concurrent_renders` if the renderer gets overloaded
 - lower the refresh frequency
 - reduce `rows` or the section width
 - verify that Grafana rendering is healthy
