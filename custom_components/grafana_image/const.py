@@ -19,6 +19,7 @@ DEFAULT_FIT = "contain"
 
 DATA_CONFIG = "config"
 DATA_CACHE = "cache"
+DATA_FETCH_LOCKS = "fetch_locks"
 
 RENDER_PATH = "/api/grafana_image/render"
 STATIC_PATH = "/api/grafana_image/static/grafana-image-card.js"

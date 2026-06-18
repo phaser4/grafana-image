@@ -321,6 +321,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         return;
       }
 
+      let requestId = 0;
       try {
         const { width: measuredWidth, height: measuredHeight } = this._getMeasuredDimensions();
         if (!measuredWidth || !measuredHeight) {
@@ -333,7 +334,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
           return;
         }
 
-        const requestId = ++this._loadRequestId;
+        requestId = ++this._loadRequestId;
         this._lastBucket = computeRefreshBucket(this._config.refresh_seconds, nowMs);
         this._lastRequestedUrl = imageUrl;
         this._lastFetchAt = nowMs;

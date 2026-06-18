@@ -18,6 +18,7 @@ from .const import (
     CONF_URL,
     DATA_CACHE,
     DATA_CONFIG,
+    DATA_FETCH_LOCKS,
     DOMAIN,
     RENDER_PATH,
     STATIC_PATH,
@@ -47,6 +48,7 @@ class GrafanaImageRenderView(HomeAssistantView):
         runtime = hass.data[DOMAIN]
         config = runtime[DATA_CONFIG]
         cache = runtime[DATA_CACHE]
+        fetch_locks = runtime[DATA_FETCH_LOCKS]
 
         try:
             params = parse_render_request(request.query)
@@ -61,46 +63,55 @@ class GrafanaImageRenderView(HomeAssistantView):
                 content_type=cached_entry.content_type,
             )
 
-        render_url = build_grafana_render_url(config[CONF_URL], params)
-        headers = {}
-        if config.get(CONF_API_TOKEN):
-            headers["Authorization"] = f"Bearer {config[CONF_API_TOKEN]}"
+        fetch_lock = fetch_locks.setdefault(cache_key, asyncio.Lock())
+        async with fetch_lock:
+            cached_entry = cache.get(cache_key)
+            if cached_entry and cache_entry_is_valid(cached_entry):
+                return web.Response(
+                    body=cached_entry.content,
+                    content_type=cached_entry.content_type,
+                )
 
-        session = async_get_clientsession(hass)
+            render_url = build_grafana_render_url(config[CONF_URL], params)
+            headers = {}
+            if config.get(CONF_API_TOKEN):
+                headers["Authorization"] = f"Bearer {config[CONF_API_TOKEN]}"
 
-        try:
-            async with asyncio.timeout(config[CONF_TIMEOUT_SECONDS]):
-                async with session.get(render_url, headers=headers) as response:
-                    content = await response.read()
-                    content_type = response.headers.get("Content-Type", "").split(";")[0]
+            session = async_get_clientsession(hass)
 
-                    if response.status != 200:
-                        detail = _decode_error_body(content)
-                        return _json_error(
-                            f"Grafana render failed with status {response.status}: {detail}",
-                            502,
-                        )
+            try:
+                async with asyncio.timeout(config[CONF_TIMEOUT_SECONDS]):
+                    async with session.get(render_url, headers=headers) as response:
+                        content = await response.read()
+                        content_type = response.headers.get("Content-Type", "").split(";")[0]
 
-                    if content_type.lower() != "image/png":
-                        return _json_error(
-                            (
-                                "Grafana render returned unexpected content type: "
-                                f"{content_type or 'unknown'}"
-                            ),
-                            502,
-                        )
-        except TimeoutError:
-            return _json_error("Grafana render request timed out", 504)
-        except ClientError as err:
-            return _json_error(f"Grafana render request failed: {err}", 502)
-        except Exception as err:  # pragma: no cover - defensive guard
-            return _json_error(f"Unexpected internal error: {err}", 500)
+                        if response.status != 200:
+                            detail = _decode_error_body(content)
+                            return _json_error(
+                                f"Grafana render failed with status {response.status}: {detail}",
+                                502,
+                            )
 
-        cache_seconds = config[CONF_CACHE_SECONDS]
-        if cache_seconds > 0:
-            cache[cache_key] = build_cache_entry(content, content_type, cache_seconds)
+                        if content_type.lower() != "image/png":
+                            return _json_error(
+                                (
+                                    "Grafana render returned unexpected content type: "
+                                    f"{content_type or 'unknown'}"
+                                ),
+                                502,
+                            )
+            except TimeoutError:
+                return _json_error("Grafana render request timed out", 504)
+            except ClientError as err:
+                return _json_error(f"Grafana render request failed: {err}", 502)
+            except Exception as err:  # pragma: no cover - defensive guard
+                return _json_error(f"Unexpected internal error: {err}", 500)
 
-        return web.Response(body=content, content_type=content_type)
+            cache_seconds = config[CONF_CACHE_SECONDS]
+            if cache_seconds > 0:
+                cache[cache_key] = build_cache_entry(content, content_type, cache_seconds)
+
+            return web.Response(body=content, content_type=content_type)
 
 
 class GrafanaImageStaticView(HomeAssistantView):

@@ -24,6 +24,13 @@ runtime = _load_runtime_module()
 
 
 class NormalizeIntegrationConfigTests(unittest.TestCase):
+    def test_build_runtime_state_includes_cache_and_locks(self):
+        state = runtime.build_runtime_state({"url": "http://grafana.local:3000/"})
+
+        self.assertEqual(state["config"]["url"], "http://grafana.local:3000")
+        self.assertEqual(state["cache"], {})
+        self.assertEqual(state["fetch_locks"], {})
+
     def test_applies_defaults(self):
         config = runtime.normalize_integration_config({"url": "http://grafana.local:3000/"})
 

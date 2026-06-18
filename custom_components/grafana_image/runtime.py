@@ -52,6 +52,7 @@ def build_runtime_state(config: Mapping[str, Any] | None) -> dict[str, Any]:
     return {
         "config": normalize_integration_config(config),
         "cache": {},
+        "fetch_locks": {},
     }
 
 
