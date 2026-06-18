@@ -32,13 +32,13 @@ function computeRefreshBucket(refreshSeconds, nowMs = Date.now()) {
   return Math.floor(nowMs / (safeRefreshSeconds * 1000));
 }
 
-function resolveRenderDimensions(config, measuredWidth) {
+function resolveRenderDimensions(config, measuredWidth, devicePixelRatio = 1) {
   const normalized = normalizeConfig(config);
   const fallbackWidth = Math.max(100, Number(normalized.width) || DEFAULT_CONFIG.width);
-  const fallbackHeight = Math.max(100, Number(normalized.height) || DEFAULT_CONFIG.height);
-  const aspectRatio = fallbackHeight / fallbackWidth;
-  const effectiveWidth = Math.max(100, Math.round(Number(measuredWidth) || fallbackWidth));
-  const effectiveHeight = Math.max(100, Math.round(effectiveWidth * aspectRatio));
+  const configuredHeight = Math.max(100, Number(normalized.height) || DEFAULT_CONFIG.height);
+  const safeDevicePixelRatio = Math.min(3, Math.max(1, Number(devicePixelRatio) || 1));
+  const effectiveWidth = Math.max(100, Math.round((Number(measuredWidth) || fallbackWidth) * safeDevicePixelRatio));
+  const effectiveHeight = Math.max(100, Math.round(configuredHeight * safeDevicePixelRatio));
 
   return {
     width: effectiveWidth,
@@ -46,9 +46,9 @@ function resolveRenderDimensions(config, measuredWidth) {
   };
 }
 
-function buildImageUrl(config, nowMs = Date.now(), measuredWidth) {
+function buildImageUrl(config, nowMs = Date.now(), measuredWidth, devicePixelRatio = 1) {
   const normalized = normalizeConfig(config);
-  const dimensions = resolveRenderDimensions(normalized, measuredWidth);
+  const dimensions = resolveRenderDimensions(normalized, measuredWidth, devicePixelRatio);
   const url = new URL("/api/grafana_image/render", "http://homeassistant.local");
 
   url.searchParams.set("dashboard_uid", normalized.dashboard_uid);
@@ -221,7 +221,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
       try {
         const measuredWidth = this._getMeasuredWidth();
-        const imageUrl = buildImageUrl(this._config, Date.now(), measuredWidth);
+        const devicePixelRatio = window.devicePixelRatio || 1;
+        const imageUrl = buildImageUrl(this._config, Date.now(), measuredWidth, devicePixelRatio);
         const response = await fetch(imageUrl, {
           headers: {
             Authorization: getAuthorizationHeader(this._hass),
