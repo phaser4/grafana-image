@@ -3,11 +3,13 @@ const DEFAULT_CONFIG = {
   org_id: 1,
   theme: "dark",
   width: 900,
-  height: 320,
+  rows: 3,
+  columns: 12,
   refresh_seconds: 60,
   fit: "contain",
 };
 const MIN_FETCH_INTERVAL_MS = 10000;
+const GRID_COLUMN_COUNT = 12;
 
 function validateRequiredConfig(config) {
   const requiredFields = ["dashboard_uid", "panel_id", "from", "to"];
@@ -33,12 +35,60 @@ function computeRefreshBucket(refreshSeconds, nowMs = Date.now()) {
   return Math.floor(nowMs / (safeRefreshSeconds * 1000));
 }
 
-function resolveRenderDimensions(config, measuredWidth) {
+function resolveCardRows(config) {
+  const merged = {
+    ...DEFAULT_CONFIG,
+    ...(config || {}),
+  };
+  const parsedRows = Number(merged.rows);
+  const safeRows = Number.isFinite(parsedRows) ? parsedRows : DEFAULT_CONFIG.rows;
+
+  return Math.max(1, Math.round(safeRows));
+}
+
+function resolveCardColumns(config) {
+  const merged = {
+    ...DEFAULT_CONFIG,
+    ...(config || {}),
+  };
+
+  if (merged.columns === "full") {
+    return "full";
+  }
+  const parsedColumns = Number(merged.columns);
+  const safeColumns = Number.isFinite(parsedColumns) ? parsedColumns : DEFAULT_CONFIG.columns;
+
+  return Math.max(1, Math.min(GRID_COLUMN_COUNT, Math.round(safeColumns)));
+}
+
+function resolveFallbackRenderHeight(config) {
+  const merged = {
+    ...DEFAULT_CONFIG,
+    ...(config || {}),
+  };
+  const verticalChrome = 32 + (merged.title ? 40 : 0);
+
+  return Math.max(100, resolveCardRows(merged) * 50 - verticalChrome);
+}
+
+function resolveGridOptions(config) {
+  return {
+    rows: resolveCardRows(config),
+    columns: resolveCardColumns(config),
+    min_rows: 1,
+    min_columns: 1,
+  };
+}
+
+function computeCardSize(config) {
+  return resolveCardRows(config);
+}
+
+function resolveRenderDimensions(config, measuredWidth, measuredHeight) {
   const normalized = normalizeConfig(config);
   const fallbackWidth = Math.max(100, Number(normalized.width) || DEFAULT_CONFIG.width);
-  const configuredHeight = Math.max(100, Number(normalized.height) || DEFAULT_CONFIG.height);
   const effectiveWidth = Math.max(100, Math.round(Number(measuredWidth) || fallbackWidth));
-  const effectiveHeight = configuredHeight;
+  const effectiveHeight = Math.max(100, Math.round(Number(measuredHeight) || resolveFallbackRenderHeight(normalized)));
 
   return {
     width: effectiveWidth,
@@ -46,9 +96,9 @@ function resolveRenderDimensions(config, measuredWidth) {
   };
 }
 
-function buildImageUrl(config, nowMs = Date.now(), measuredWidth) {
+function buildImageUrl(config, nowMs = Date.now(), measuredWidth, measuredHeight) {
   const normalized = normalizeConfig(config);
-  const dimensions = resolveRenderDimensions(normalized, measuredWidth);
+  const dimensions = resolveRenderDimensions(normalized, measuredWidth, measuredHeight);
   const url = new URL("/api/grafana_image/render", "http://homeassistant.local");
 
   url.searchParams.set("dashboard_uid", normalized.dashboard_uid);
@@ -89,11 +139,17 @@ function getAuthorizationHeader(hass) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DEFAULT_CONFIG,
+    GRID_COLUMN_COUNT,
     MIN_FETCH_INTERVAL_MS,
     buildImageUrl,
+    computeCardSize,
     computeRefreshBucket,
     getAuthorizationHeader,
     normalizeConfig,
+    resolveCardColumns,
+    resolveCardRows,
+    resolveFallbackRenderHeight,
+    resolveGridOptions,
     resolveRenderDimensions,
     shouldFetchImage,
     validateRequiredConfig,
@@ -115,6 +171,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._loadRequestId = 0;
       this._resizeObserver = undefined;
       this._renderWidth = undefined;
+      this._renderHeight = undefined;
       this._lastRequestedUrl = undefined;
       this._lastFetchAt = 0;
     }
@@ -148,26 +205,47 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
     }
 
     getCardSize() {
-      return 3;
+      return computeCardSize(this._config);
+    }
+
+    getGridOptions() {
+      return resolveGridOptions(this._config);
     }
 
     render() {
       if (!this._config || !this.shadowRoot) {
         return;
       }
+      const fallbackRenderHeight = resolveFallbackRenderHeight(this._config);
 
       this.shadowRoot.innerHTML = `
         <style>
+          :host {
+            display: block;
+            height: 100%;
+          }
+
+          ha-card {
+            height: 100%;
+          }
+
           .card-content {
             padding: 16px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
           }
 
           .image-wrapper {
             position: relative;
+            flex: 1;
+            min-height: ${fallbackRenderHeight}px;
           }
 
           img {
             width: 100%;
+            height: 100%;
             display: block;
             object-fit: ${this._config.fit};
           }
@@ -231,13 +309,13 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       }
 
       try {
-        const measuredWidth = this._getMeasuredWidth();
-        if (!measuredWidth) {
+        const { width: measuredWidth, height: measuredHeight } = this._getMeasuredDimensions();
+        if (!measuredWidth || !measuredHeight) {
           return;
         }
 
         const nowMs = Date.now();
-        const imageUrl = buildImageUrl(this._config, nowMs, measuredWidth);
+        const imageUrl = buildImageUrl(this._config, nowMs, measuredWidth, measuredHeight);
         if (!shouldFetchImage(imageUrl, this._lastRequestedUrl, this._lastFetchAt, nowMs)) {
           return;
         }
@@ -316,11 +394,13 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
       this._resizeObserver = new ResizeObserver((entries) => {
         const width = Math.round(entries[0]?.contentRect?.width || 0);
-        if (!width || width === this._renderWidth) {
+        const height = Math.round(entries[0]?.contentRect?.height || 0);
+        if ((!width || width === this._renderWidth) && (!height || height === this._renderHeight)) {
           return;
         }
 
         this._renderWidth = width;
+        this._renderHeight = height;
         if (this._config && this._image) {
           this._updateImage();
         }
@@ -329,13 +409,20 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._resizeObserver.observe(this._wrapper);
     }
 
-    _getMeasuredWidth() {
-      if (this._renderWidth) {
-        return this._renderWidth;
+    _getMeasuredDimensions() {
+      if (this._renderWidth && this._renderHeight) {
+        return {
+          width: this._renderWidth,
+          height: this._renderHeight,
+        };
       }
 
-      const width = Math.round(this._wrapper?.getBoundingClientRect?.().width || 0);
-      return width || undefined;
+      const rect = this._wrapper?.getBoundingClientRect?.();
+
+      return {
+        width: Math.round(rect?.width || 0) || undefined,
+        height: Math.round(rect?.height || 0) || undefined,
+      };
     }
   }
 

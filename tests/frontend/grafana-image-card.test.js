@@ -2,10 +2,16 @@ const assert = require("node:assert/strict");
 
 const {
   buildImageUrl,
+  computeCardSize,
   computeRefreshBucket,
+  GRID_COLUMN_COUNT,
   MIN_FETCH_INTERVAL_MS,
   getAuthorizationHeader,
   normalizeConfig,
+  resolveCardColumns,
+  resolveCardRows,
+  resolveFallbackRenderHeight,
+  resolveGridOptions,
   resolveRenderDimensions,
   shouldFetchImage,
   validateRequiredConfig,
@@ -40,7 +46,8 @@ run("normalizeConfig applies defaults", () => {
   assert.equal(config.org_id, 1);
   assert.equal(config.theme, "dark");
   assert.equal(config.width, 900);
-  assert.equal(config.height, 320);
+  assert.equal(config.rows, 3);
+  assert.equal(config.columns, 12);
   assert.equal(config.refresh_seconds, 60);
   assert.equal(config.fit, "contain");
 });
@@ -59,11 +66,12 @@ run("buildImageUrl encodes backend parameters", () => {
       to: "now",
       title: "Aquarium temperature",
       width: 1024,
-      height: 480,
+      rows: 6,
       refresh_seconds: 30,
     },
     60000,
     512,
+    284,
   );
 
   assert.match(url, /^\/api\/grafana_image\/render\?/);
@@ -72,7 +80,7 @@ run("buildImageUrl encodes backend parameters", () => {
   assert.match(url, /from=now-24h/);
   assert.match(url, /to=now/);
   assert.match(url, /width=512/);
-  assert.match(url, /height=480/);
+  assert.match(url, /height=284/);
   assert.match(url, /t=2/);
 });
 
@@ -109,16 +117,17 @@ run("resolveRenderDimensions uses card width and configured height", () => {
       from: "now-24h",
       to: "now",
       width: 900,
-      height: 320,
+      rows: 4,
     },
     600,
+    180,
   );
 
   assert.equal(dimensions.width, 600);
-  assert.equal(dimensions.height, 320);
+  assert.equal(dimensions.height, 180);
 });
 
-run("resolveRenderDimensions uses fallback width before measurement", () => {
+run("resolveRenderDimensions uses fallback width and row-based height before measurement", () => {
   const dimensions = resolveRenderDimensions(
     {
       dashboard_uid: "aquarium",
@@ -126,13 +135,44 @@ run("resolveRenderDimensions uses fallback width before measurement", () => {
       from: "now-24h",
       to: "now",
       width: 900,
-      height: 320,
+      rows: 4,
     },
+    undefined,
     undefined,
   );
 
   assert.equal(dimensions.width, 900);
-  assert.equal(dimensions.height, 320);
+  assert.equal(dimensions.height, 168);
+});
+
+run("computeCardSize uses configured rows", () => {
+  assert.equal(computeCardSize({ rows: 3 }), 3);
+  assert.equal(computeCardSize({ rows: 6 }), 6);
+});
+
+run("resolveCardRows clamps to at least one row", () => {
+  assert.equal(resolveCardRows({ rows: 0 }), 1);
+  assert.equal(resolveCardRows({ rows: 4.4 }), 4);
+});
+
+run("resolveCardColumns clamps to Home Assistant grid width", () => {
+  assert.equal(resolveCardColumns({ columns: 0 }), 1);
+  assert.equal(resolveCardColumns({ columns: 40 }), GRID_COLUMN_COUNT);
+  assert.equal(resolveCardColumns({ columns: "full" }), "full");
+});
+
+run("resolveFallbackRenderHeight subtracts card chrome", () => {
+  assert.equal(resolveFallbackRenderHeight({ rows: 3 }), 118);
+  assert.equal(resolveFallbackRenderHeight({ rows: 3, title: "Aquarium" }), 100);
+});
+
+run("resolveGridOptions defaults to a full-width three-row card", () => {
+  assert.deepEqual(resolveGridOptions({}), {
+    rows: 3,
+    columns: 12,
+    min_rows: 1,
+    min_columns: 1,
+  });
 });
 
 run("getAuthorizationHeader reads Home Assistant token", () => {

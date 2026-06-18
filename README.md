@@ -112,6 +112,8 @@ to: now
 slug: aquarium
 org_id: 1
 theme: dark
+columns: 12
+rows: 3
 refresh_seconds: 60
 fit: contain
 ```
@@ -129,7 +131,8 @@ fit: contain
 | `org_id` | no | `1` | Grafana organization ID |
 | `theme` | no | `dark` | Grafana render theme |
 | `width` | no | `900` | Fallback width used only before the card can measure its real width |
-| `height` | no | `320` | Render height in pixels, which also controls the card's displayed height |
+| `columns` | no | `12` | Default section-grid width for the card; accepts `1` to `12` or `full` |
+| `rows` | no | `3` | Default card height in Lovelace row units |
 | `refresh_seconds` | no | `60` | Auto-refresh interval for the image |
 | `fit` | no | `contain` | CSS `object-fit` value for the image |
 
@@ -145,7 +148,7 @@ Home Assistant then calls Grafana using the configured base URL and optional bea
 
 Successful PNG responses are cached in memory based on the effective render parameters.
 
-The card measures its actual rendered width and asks Grafana for an image at exactly that width. It keeps the configured `height` as the chart height, so the returned PNG matches the displayed card size without browser-side upscaling or downscaling.
+The card reports Lovelace grid sizing through `columns` and `rows`, with defaults of a full-width `12 x 3` card. It then measures the actual rendered image area inside the card and asks Grafana for a PNG at that exact width and height, so the image matches the displayed card size without browser-side upscaling or downscaling.
 
 ## Troubleshooting
 
@@ -175,7 +178,7 @@ If renders are slow:
 
 - increase `timeout_seconds`
 - lower the refresh frequency
-- reduce `width` and `height`
+- reduce `rows` or the section width
 - verify that Grafana rendering is healthy
 
 ## Security Notes
