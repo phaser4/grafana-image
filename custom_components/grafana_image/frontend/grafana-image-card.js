@@ -192,11 +192,62 @@ function formatAgeLabel(lastRenderedAt, nowMs = Date.now()) {
   return `age: ${Math.floor(ageHours / 24)}d`;
 }
 
-function buildBackendFetchOptions() {
-  return {
+function resolveAuthContext(hass) {
+  return hass?.connection?.options?.auth ?? hass?.auth;
+}
+
+function resolveAccessToken(hass) {
+  const auth = resolveAuthContext(hass);
+
+  return (
+    auth?.accessToken ??
+    auth?.data?.access_token ??
+    auth?.data?.accessToken ??
+    hass?.auth?.accessToken ??
+    hass?.auth?.data?.access_token ??
+    hass?.auth?.data?.accessToken
+  );
+}
+
+async function fetchBackend(hass, url, init = {}) {
+  const auth = resolveAuthContext(hass);
+  const requestInit = {
+    ...init,
     cache: "no-store",
     credentials: "same-origin",
   };
+
+  const withToken = (token) => ({
+    ...requestInit,
+    headers: {
+      ...(requestInit.headers || {}),
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  let token = resolveAccessToken(hass);
+  if (!token && auth?.refreshAccessToken) {
+    await auth.refreshAccessToken();
+    token = resolveAccessToken(hass);
+  }
+
+  if (!token) {
+    throw new Error("Home Assistant access token is not available");
+  }
+
+  let response = await fetch(url, withToken(token));
+  if (response.status !== 401 || !auth?.refreshAccessToken) {
+    return response;
+  }
+
+  await auth.refreshAccessToken();
+  const refreshedToken = resolveAccessToken(hass);
+  if (!refreshedToken) {
+    return response;
+  }
+
+  response = await fetch(url, withToken(refreshedToken));
+  return response;
 }
 
 function resolvePlaceholderMessage(status, fallbackMessage = "Grafana image unavailable") {
@@ -242,10 +293,12 @@ if (typeof module !== "undefined" && module.exports) {
     buildStatusUrl,
     computeCardSize,
     computeRefreshBucket,
+    fetchBackend,
     formatAgeLabel,
-    buildBackendFetchOptions,
     normalizeConfig,
     readErrorMessage,
+    resolveAccessToken,
+    resolveAuthContext,
     resolveCardHeight,
     resolveCardColumns,
     resolveCardRows,
@@ -497,9 +550,9 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
         requestId = ++this._loadRequestId;
         this._setError("");
-        const statusResponse = await fetch(
+        const statusResponse = await fetchBackend(
+          this._hass,
           buildStatusUrl(this._config, measuredWidth, measuredHeight),
-          buildBackendFetchOptions(),
         );
 
         if (!statusResponse.ok) {
@@ -570,7 +623,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._lastFetchAt = nowMs;
       this._image.style.objectFit = this._config.fit;
 
-      const response = await fetch(imageUrl, buildBackendFetchOptions());
+      const response = await fetchBackend(this._hass, imageUrl);
 
       if (!response.ok) {
         console.warn("Grafana Image cached image request failed", {

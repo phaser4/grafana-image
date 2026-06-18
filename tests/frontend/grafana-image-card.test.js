@@ -1,16 +1,18 @@
 const assert = require("node:assert/strict");
 
 const {
-  buildBackendFetchOptions,
   buildImageUrl,
   buildStatusUrl,
   computeCardSize,
   computeRefreshBucket,
+  fetchBackend,
   formatAgeLabel,
   GRID_COLUMN_COUNT,
   MIN_FETCH_INTERVAL_MS,
   normalizeConfig,
   readErrorMessage,
+  resolveAccessToken,
+  resolveAuthContext,
   resolveCardHeight,
   resolveCardColumns,
   resolveCardRows,
@@ -22,14 +24,18 @@ const {
   validateRequiredConfig,
 } = require("../../custom_components/grafana_image/frontend/grafana-image-card.js");
 
+let runChain = Promise.resolve();
+
 function run(name, fn) {
-  try {
-    fn();
-    console.log(`PASS ${name}`);
-  } catch (error) {
-    console.error(`FAIL ${name}`);
-    throw error;
-  }
+  runChain = runChain
+    .then(() => fn())
+    .then(() => {
+      console.log(`PASS ${name}`);
+    })
+    .catch((error) => {
+      console.error(`FAIL ${name}`);
+      throw error;
+    });
 }
 
 run("validateRequiredConfig rejects missing fields", () => {
@@ -260,9 +266,78 @@ run("resolveGridOptions defaults to a full-width three-row card", () => {
   });
 });
 
-run("buildBackendFetchOptions uses same-origin credentials", () => {
-  assert.deepEqual(buildBackendFetchOptions(), {
-    cache: "no-store",
-    credentials: "same-origin",
-  });
+run("resolveAuthContext prefers live connection auth", () => {
+  const auth = { accessToken: "live-token" };
+  assert.equal(resolveAuthContext({ connection: { options: { auth } }, auth: { data: { access_token: "stale" } } }), auth);
+});
+
+run("resolveAccessToken prefers live connection token", () => {
+  assert.equal(
+    resolveAccessToken({
+      connection: { options: { auth: { accessToken: "live-token" } } },
+      auth: { data: { access_token: "stale-token" } },
+    }),
+    "live-token",
+  );
+});
+
+run("fetchBackend sends Authorization header and same-origin credentials", async () => {
+  const calls = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return { status: 200, ok: true };
+  };
+
+  try {
+    const response = await fetchBackend(
+      { connection: { options: { auth: { accessToken: "abc123" } } } },
+      "/api/test",
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "/api/test");
+    assert.equal(calls[0].init.credentials, "same-origin");
+    assert.equal(calls[0].init.cache, "no-store");
+    assert.equal(calls[0].init.headers.Authorization, "Bearer abc123");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+run("fetchBackend refreshes and retries once on 401", async () => {
+  const auth = {
+    accessToken: "stale-token",
+    async refreshAccessToken() {
+      this.accessToken = "fresh-token";
+    },
+  };
+
+  const calls = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (_url, init) => {
+    calls.push(init.headers.Authorization);
+    if (calls.length === 1) {
+      return { status: 401, ok: false };
+    }
+    return { status: 200, ok: true };
+  };
+
+  try {
+    const response = await fetchBackend(
+      { connection: { options: { auth } } },
+      "/api/test",
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls, ["Bearer stale-token", "Bearer fresh-token"]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+runChain.catch((error) => {
+  process.exitCode = 1;
+  throw error;
 });
