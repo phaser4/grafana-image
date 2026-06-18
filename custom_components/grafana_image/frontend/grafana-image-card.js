@@ -8,8 +8,12 @@ const DEFAULT_CONFIG = {
   refresh_seconds: 60,
   fit: "contain",
 };
-const MIN_FETCH_INTERVAL_MS = 10000;
+const MIN_FETCH_INTERVAL_MS = 30000;
 const GRID_COLUMN_COUNT = 12;
+const SECTION_ROW_HEIGHT_PX = 56;
+const SECTION_ROW_GAP_PX = 8;
+const CARD_CONTENT_PADDING_PX = 32;
+const CARD_HEADER_ESTIMATE_PX = 40;
 
 function validateRequiredConfig(config) {
   const requiredFields = ["dashboard_uid", "panel_id", "from", "to"];
@@ -66,22 +70,33 @@ function resolveFallbackRenderHeight(config) {
     ...DEFAULT_CONFIG,
     ...(config || {}),
   };
-  const verticalChrome = 32 + (merged.title ? 40 : 0);
+  const verticalChrome = CARD_CONTENT_PADDING_PX + (merged.title ? CARD_HEADER_ESTIMATE_PX : 0);
 
-  return Math.max(1, resolveCardRows(merged) * 50 - verticalChrome);
+  return Math.max(1, resolveCardHeight(merged) - verticalChrome);
+}
+
+function resolveCardHeight(config) {
+  const rows = resolveCardRows(config);
+
+  return rows * SECTION_ROW_HEIGHT_PX + Math.max(0, rows - 1) * SECTION_ROW_GAP_PX;
 }
 
 function resolveGridOptions(config) {
+  const rows = resolveCardRows(config);
+  const columns = resolveCardColumns(config);
+
   return {
-    rows: resolveCardRows(config),
-    columns: resolveCardColumns(config),
-    min_rows: 1,
-    min_columns: 1,
+    rows,
+    columns,
+    min_rows: rows,
+    max_rows: rows,
+    min_columns: columns === "full" ? 1 : columns,
+    max_columns: columns === "full" ? undefined : columns,
   };
 }
 
 function computeCardSize(config) {
-  return resolveCardRows(config);
+  return Math.max(1, Math.ceil(resolveCardHeight(config) / 50));
 }
 
 function resolveRenderDimensions(config, measuredWidth, measuredHeight) {
@@ -146,6 +161,7 @@ if (typeof module !== "undefined" && module.exports) {
     computeRefreshBucket,
     getAuthorizationHeader,
     normalizeConfig,
+    resolveCardHeight,
     resolveCardColumns,
     resolveCardRows,
     resolveFallbackRenderHeight,
@@ -216,12 +232,18 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       if (!this._config || !this.shadowRoot) {
         return;
       }
+      const resolvedCardHeight = resolveCardHeight(this._config);
       const fallbackRenderHeight = resolveFallbackRenderHeight(this._config);
 
       this.shadowRoot.innerHTML = `
         <style>
           :host {
             display: block;
+          }
+
+          ha-card {
+            height: ${resolvedCardHeight}px;
+            overflow: hidden;
           }
 
           .card-content {

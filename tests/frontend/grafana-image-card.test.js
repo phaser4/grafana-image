@@ -8,6 +8,7 @@ const {
   MIN_FETCH_INTERVAL_MS,
   getAuthorizationHeader,
   normalizeConfig,
+  resolveCardHeight,
   resolveCardColumns,
   resolveCardRows,
   resolveFallbackRenderHeight,
@@ -142,12 +143,12 @@ run("resolveRenderDimensions uses fallback width and row-based height before mea
   );
 
   assert.equal(dimensions.width, 900);
-  assert.equal(dimensions.height, 168);
+  assert.equal(dimensions.height, 216);
 });
 
 run("computeCardSize uses configured rows", () => {
-  assert.equal(computeCardSize({ rows: 3 }), 3);
-  assert.equal(computeCardSize({ rows: 6 }), 6);
+  assert.equal(computeCardSize({ rows: 3 }), 4);
+  assert.equal(computeCardSize({ rows: 6 }), 8);
 });
 
 run("resolveCardRows clamps to at least one row", () => {
@@ -161,18 +162,25 @@ run("resolveCardColumns clamps to Home Assistant grid width", () => {
   assert.equal(resolveCardColumns({ columns: "full" }), "full");
 });
 
+run("resolveCardHeight uses official section row dimensions", () => {
+  assert.equal(resolveCardHeight({ rows: 1 }), 56);
+  assert.equal(resolveCardHeight({ rows: 3 }), 184);
+});
+
 run("resolveFallbackRenderHeight subtracts card chrome", () => {
-  assert.equal(resolveFallbackRenderHeight({ rows: 3 }), 118);
-  assert.equal(resolveFallbackRenderHeight({ rows: 3, title: "Aquarium" }), 78);
-  assert.equal(resolveFallbackRenderHeight({ rows: 2 }), 68);
+  assert.equal(resolveFallbackRenderHeight({ rows: 3 }), 152);
+  assert.equal(resolveFallbackRenderHeight({ rows: 3, title: "Aquarium" }), 112);
+  assert.equal(resolveFallbackRenderHeight({ rows: 2 }), 88);
 });
 
 run("resolveGridOptions defaults to a full-width three-row card", () => {
   assert.deepEqual(resolveGridOptions({}), {
     rows: 3,
     columns: 12,
-    min_rows: 1,
-    min_columns: 1,
+    min_rows: 3,
+    max_rows: 3,
+    min_columns: 12,
+    max_columns: 12,
   });
 });
 
