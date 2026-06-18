@@ -5,6 +5,7 @@ const {
   buildStatusUrl,
   computeCardSize,
   computeRefreshBucket,
+  formatAgeLabel,
   GRID_COLUMN_COUNT,
   MIN_FETCH_INTERVAL_MS,
   getAuthorizationHeader,
@@ -59,6 +60,15 @@ run("normalizeConfig applies defaults", () => {
 run("computeRefreshBucket buckets by refresh interval", () => {
   assert.equal(computeRefreshBucket(60, 119999), 1);
   assert.equal(computeRefreshBucket(60, 120000), 2);
+});
+
+run("formatAgeLabel formats short and long ages", () => {
+  const nowMs = Date.parse("2026-06-18T12:00:00Z");
+
+  assert.equal(formatAgeLabel("2026-06-18T11:59:30Z", nowMs), "age: 30s");
+  assert.equal(formatAgeLabel("2026-06-18T11:58:00Z", nowMs), "age: 2m");
+  assert.equal(formatAgeLabel("2026-06-18T10:00:00Z", nowMs), "age: 2h");
+  assert.equal(formatAgeLabel("2026-06-16T12:00:00Z", nowMs), "age: 2d");
 });
 
 run("buildStatusUrl encodes backend parameters", () => {

@@ -164,6 +164,34 @@ function shouldFetchImage(nextUrl, lastUrl, lastFetchAt, nowMs = Date.now(), min
   return nowMs - lastFetchAt >= minIntervalMs;
 }
 
+function formatAgeLabel(lastRenderedAt, nowMs = Date.now()) {
+  if (!lastRenderedAt) {
+    return "";
+  }
+
+  const renderedAtMs = Date.parse(lastRenderedAt);
+  if (Number.isNaN(renderedAtMs)) {
+    return "";
+  }
+
+  const ageSeconds = Math.max(0, Math.floor((nowMs - renderedAtMs) / 1000));
+  if (ageSeconds < 60) {
+    return `age: ${ageSeconds}s`;
+  }
+
+  const ageMinutes = Math.floor(ageSeconds / 60);
+  if (ageMinutes < 60) {
+    return `age: ${ageMinutes}m`;
+  }
+
+  const ageHours = Math.floor(ageMinutes / 60);
+  if (ageHours < 24) {
+    return `age: ${ageHours}h`;
+  }
+
+  return `age: ${Math.floor(ageHours / 24)}d`;
+}
+
 function getAuthorizationHeader(hass) {
   const token = hass?.auth?.data?.access_token ?? hass?.auth?.data?.accessToken;
   if (!token) {
@@ -216,6 +244,7 @@ if (typeof module !== "undefined" && module.exports) {
     buildStatusUrl,
     computeCardSize,
     computeRefreshBucket,
+    formatAgeLabel,
     getAuthorizationHeader,
     normalizeConfig,
     readErrorMessage,
@@ -252,6 +281,8 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._renderHeight = undefined;
       this._lastRequestedUrl = undefined;
       this._lastFetchAt = 0;
+      this._ageBadge = undefined;
+      this._lastRenderedAt = undefined;
     }
 
     setConfig(config) {
@@ -349,6 +380,24 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
             white-space: pre-wrap;
           }
 
+          .age-badge {
+            position: absolute;
+            top: 6px;
+            right: 8px;
+            color: var(--secondary-text-color);
+            font-size: 0.65rem;
+            line-height: 1;
+            padding: 2px 4px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.18);
+            z-index: 1;
+            pointer-events: none;
+          }
+
+          .age-badge[hidden] {
+            display: none;
+          }
+
           .placeholder[hidden] {
             display: none;
           }
@@ -390,6 +439,10 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._placeholder.className = "placeholder";
       this._placeholder.hidden = true;
 
+      this._ageBadge = document.createElement("div");
+      this._ageBadge.className = "age-badge";
+      this._ageBadge.hidden = true;
+
       this._error = document.createElement("div");
       this._error.className = "error";
       this._error.hidden = true;
@@ -399,6 +452,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._status.hidden = true;
 
       wrapper.appendChild(this._image);
+      wrapper.appendChild(this._ageBadge);
       wrapper.appendChild(this._placeholder);
       content.appendChild(wrapper);
       content.appendChild(this._status);
@@ -416,6 +470,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
 
       const intervalMs = 1000;
       this._refreshTimer = setInterval(() => {
+        this._refreshAgeBadge();
         const nextBucket = computeRefreshBucket(this._config.refresh_seconds);
         if (nextBucket !== this._lastBucket) {
           this._updateImage(true);
@@ -472,6 +527,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
         if (status.status === "error" && !status.has_cached_image) {
           this._setError(status.message || "Grafana image failed to load");
         }
+        this._setAge(status.has_cached_image ? status.last_rendered_at : "");
 
         if (status.has_cached_image && status.cache_token) {
           await this._loadCachedImage(requestId, status.cache_token, measuredWidth, measuredHeight, nowMs);
@@ -545,6 +601,7 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       this._image.src = this._imageUrl;
       this._setImageVisible(true);
       this._setPlaceholder("");
+      this._refreshAgeBadge();
     }
 
     _setError(message) {
@@ -580,6 +637,24 @@ if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined")
       }
 
       this._image.hidden = !isVisible;
+      if (!isVisible) {
+        this._setAge("");
+      }
+    }
+
+    _setAge(lastRenderedAt) {
+      this._lastRenderedAt = lastRenderedAt || undefined;
+      this._refreshAgeBadge();
+    }
+
+    _refreshAgeBadge(nowMs = Date.now()) {
+      if (!this._ageBadge) {
+        return;
+      }
+
+      const label = formatAgeLabel(this._lastRenderedAt, nowMs);
+      this._ageBadge.textContent = label;
+      this._ageBadge.hidden = !label || !!this._image?.hidden;
     }
 
     _revokeImageUrl() {
