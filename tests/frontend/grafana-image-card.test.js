@@ -62,7 +62,6 @@ run("buildImageUrl encodes backend parameters", () => {
     },
     60000,
     512,
-    2,
   );
 
   assert.match(url, /^\/api\/grafana_image\/render\?/);
@@ -70,8 +69,8 @@ run("buildImageUrl encodes backend parameters", () => {
   assert.match(url, /panel_id=4/);
   assert.match(url, /from=now-24h/);
   assert.match(url, /to=now/);
-  assert.match(url, /width=1024/);
-  assert.match(url, /height=960/);
+  assert.match(url, /width=512/);
+  assert.match(url, /height=480/);
   assert.match(url, /t=2/);
 });
 
@@ -92,7 +91,7 @@ run("resolveRenderDimensions uses card width and configured height", () => {
   assert.equal(dimensions.height, 320);
 });
 
-run("resolveRenderDimensions scales for device pixel ratio", () => {
+run("resolveRenderDimensions uses fallback width before measurement", () => {
   const dimensions = resolveRenderDimensions(
     {
       dashboard_uid: "aquarium",
@@ -102,12 +101,11 @@ run("resolveRenderDimensions scales for device pixel ratio", () => {
       width: 900,
       height: 320,
     },
-    300,
-    2,
+    undefined,
   );
 
-  assert.equal(dimensions.width, 600);
-  assert.equal(dimensions.height, 640);
+  assert.equal(dimensions.width, 900);
+  assert.equal(dimensions.height, 320);
 });
 
 run("getAuthorizationHeader reads Home Assistant token", () => {

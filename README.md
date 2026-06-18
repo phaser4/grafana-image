@@ -128,7 +128,7 @@ fit: contain
 | `slug` | no | `_` | Cosmetic dashboard slug used in the render URL |
 | `org_id` | no | `1` | Grafana organization ID |
 | `theme` | no | `dark` | Grafana render theme |
-| `width` | no | `900` | Fallback render width used until the card can measure its real width |
+| `width` | no | `900` | Fallback width used only before the card can measure its real width |
 | `height` | no | `320` | Render height in pixels, which also controls the card's displayed height |
 | `refresh_seconds` | no | `60` | Auto-refresh interval for the image |
 | `fit` | no | `contain` | CSS `object-fit` value for the image |
@@ -145,7 +145,7 @@ Home Assistant then calls Grafana using the configured base URL and optional bea
 
 Successful PNG responses are cached in memory based on the effective render parameters.
 
-The card measures its actual rendered width and asks Grafana for an image at that width. It keeps the configured `height` as the chart height, and it scales the render request for high-DPI displays so labels stay readable.
+The card measures its actual rendered width and asks Grafana for an image at exactly that width. It keeps the configured `height` as the chart height, so the returned PNG matches the displayed card size without browser-side upscaling or downscaling.
 
 ## Troubleshooting
 
