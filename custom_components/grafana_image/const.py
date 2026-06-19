@@ -16,7 +16,7 @@ DEFAULT_ORG_ID = 1
 DEFAULT_THEME = "dark"
 DEFAULT_WIDTH = 900
 DEFAULT_HEIGHT = 320
-DEFAULT_REFRESH_SECONDS = 300
+DEFAULT_REFRESH_SECONDS = 600
 DEFAULT_FIT = "contain"
 
 DATA_CONFIG = "config"
@@ -27,6 +27,7 @@ DATA_RENDER_EVENT = "render_event"
 DATA_RENDER_QUEUE = "render_queue"
 DATA_RENDER_STATES = "render_states"
 DATA_RENDER_TASK = "render_task"
+DATA_REFRESH_TASK = "refresh_task"
 
 RENDER_PATH = "/api/grafana_image/render"
 STATUS_PATH = "/api/grafana_image/status"

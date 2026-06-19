@@ -25,6 +25,7 @@ from .const import (
     DATA_CACHE,
     DATA_CACHE_DIR,
     DATA_QUEUED_KEYS,
+    DATA_REFRESH_TASK,
     DATA_RENDER_EVENT,
     DATA_RENDER_QUEUE,
     DATA_RENDER_STATES,
@@ -34,8 +35,10 @@ from .const import (
 from .runtime import (
     RenderState,
     build_cache_entry,
+    build_render_params_from_cache_key,
     build_grafana_render_url,
     build_runtime_state,
+    cache_entry_is_fresh,
     load_cache_entries,
     persist_cache_entry,
 )
@@ -91,6 +94,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         )
     hass.async_create_task(_async_probe_grafana(hass))
     hass.data[DOMAIN][DATA_RENDER_TASK] = hass.async_create_task(_async_render_worker(hass))
+    hass.data[DOMAIN][DATA_REFRESH_TASK] = hass.async_create_task(
+        _async_refresh_scheduler(hass)
+    )
     return True
 
 
@@ -200,6 +206,43 @@ async def _async_render_worker(hass: HomeAssistant) -> None:
                     )
             finally:
                 state.is_rendering = False
+
+
+async def _async_refresh_scheduler(hass: HomeAssistant) -> None:
+    """Keep previously rendered panels warm even when no dashboard is open."""
+    runtime = hass.data[DOMAIN]
+
+    while True:
+        now = datetime.now(UTC)
+        for cache_key, cache_entry in list(runtime[DATA_CACHE].items()):
+            if cache_entry_is_fresh(cache_entry, now=now):
+                continue
+
+            state = runtime[DATA_RENDER_STATES].setdefault(cache_key, RenderState())
+            params = build_render_params_from_cache_key(
+                cache_key, cache_entry.refresh_seconds
+            )
+            _queue_render(runtime, cache_key, params, state, now)
+
+        await asyncio.sleep(60)
+
+
+def _queue_render(
+    runtime: dict,
+    cache_key: tuple,
+    params: dict[str, object],
+    state: RenderState,
+    now: datetime,
+) -> None:
+    """Queue a render key once if it is not already queued or running."""
+    if state.is_queued or state.is_rendering or cache_key in runtime[DATA_QUEUED_KEYS]:
+        return
+
+    runtime[DATA_RENDER_QUEUE].append((cache_key, params))
+    runtime[DATA_QUEUED_KEYS].add(cache_key)
+    runtime[DATA_RENDER_EVENT].set()
+    state.is_queued = True
+    state.queued_at = now
 
 
 async def _async_fetch_rendered_image(

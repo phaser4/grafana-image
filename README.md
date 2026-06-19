@@ -120,7 +120,7 @@ org_id: 1
 theme: dark
 columns: 12
 rows: 3
-refresh_seconds: 300
+refresh_seconds: 600
 fit: contain
 ```
 
@@ -139,7 +139,7 @@ fit: contain
 | `width` | no | `900` | Fallback width used only before the card can measure its real width |
 | `columns` | no | `12` | Default section-grid width for the card; accepts `1` to `12` or `full` |
 | `rows` | no | `3` | Default card height in Lovelace row units |
-| `refresh_seconds` | no | `300` | Background re-render interval for the image; cards can override it per panel |
+| `refresh_seconds` | no | `600` | Background re-render interval for the image; cards can override it per panel |
 | `fit` | no | `contain` | CSS `object-fit` value for the image |
 
 ## How It Works
@@ -155,6 +155,7 @@ The backend then:
 - checks whether a recent cached PNG already exists
 - returns `ready`, `stale`, `queued`, `rendering`, or `error`
 - queues the render key for the single background worker when the image is older than `refresh_seconds`
+- keeps previously rendered panels refreshing in the backend even while no dashboard is open
 
 When a cached PNG is available, the card then requests:
 
@@ -168,7 +169,7 @@ Successful PNG responses are cached based on the effective render parameters. If
 
 The integration also persists the last successful image for each render key, so after a restart it can immediately show the previous image while a new background refresh is queued.
 
-By default, the integration re-renders a panel every `5` minutes. Override `refresh_seconds` on a card when a panel should refresh faster or slower.
+By default, the integration re-renders a panel every `10` minutes. Override `refresh_seconds` on a card when a panel should refresh faster or slower.
 
 The card reports Lovelace grid sizing through `columns` and `rows`, with defaults of a full-width `12 x 3` card. It then measures the actual rendered image area inside the card and asks Grafana for a PNG at that exact width and height, so the image matches the displayed card size without browser-side upscaling or downscaling.
 

@@ -71,7 +71,7 @@ class ParseRenderRequestTests(unittest.TestCase):
         self.assertEqual(params["theme"], "dark")
         self.assertEqual(params["width"], 900)
         self.assertEqual(params["height"], 320)
-        self.assertEqual(params["refresh_seconds"], 300)
+        self.assertEqual(params["refresh_seconds"], 600)
 
     def test_rejects_missing_required_params(self):
         with self.assertRaises(runtime.QueryValidationError):
@@ -173,6 +173,7 @@ class UrlAndCacheTests(unittest.TestCase):
         self.assertEqual(restored_entry.content, b"png-bytes")
         self.assertEqual(restored_entry.content_type, "image/png")
         self.assertEqual(restored_entry.rendered_at, now)
+        self.assertEqual(restored_entry.refresh_seconds, 30)
         self.assertEqual(restored_entry.fresh_until, now + timedelta(seconds=30))
         self.assertIsNone(restored_entry.expires_at)
 
@@ -189,6 +190,48 @@ class UrlAndCacheTests(unittest.TestCase):
         self.assertIn(cache_key, loaded)
         self.assertEqual(loaded[cache_key].content, b"png-bytes")
         self.assertEqual(loaded[cache_key].rendered_at, now)
+        self.assertEqual(loaded[cache_key].refresh_seconds, 30)
+
+    def test_build_render_params_from_cache_key(self):
+        params = runtime.build_render_params_from_cache_key(
+            ("aquarium", "_", 4, 1, "now-24h", "now", "dark", 900, 320),
+            600,
+        )
+
+        self.assertEqual(
+            params,
+            {
+                "dashboard_uid": "aquarium",
+                "slug": "_",
+                "panel_id": 4,
+                "org_id": 1,
+                "from": "now-24h",
+                "to": "now",
+                "theme": "dark",
+                "width": 900,
+                "height": 320,
+                "refresh_seconds": 600,
+            },
+        )
+
+    def test_deserialize_v1_cache_record_infers_refresh_seconds(self):
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        cache_key = ("aquarium", "_", 4, 1, "now-24h", "now", "dark", 900, 320)
+        payload = {
+            "version": 1,
+            "cache_key": list(cache_key),
+            "expires_at": None,
+            "fresh_until": (now + timedelta(seconds=45)).isoformat(),
+            "rendered_at": now.isoformat(),
+            "content_type": "image/png",
+            "content_b64": "YmluYXJ5",
+        }
+
+        restored_key, restored_entry = runtime.deserialize_cache_entry(payload)
+
+        self.assertEqual(restored_key, cache_key)
+        self.assertEqual(restored_entry.content, b"binary")
+        self.assertEqual(restored_entry.refresh_seconds, 45)
 
 
 class StatusResolutionTests(unittest.TestCase):

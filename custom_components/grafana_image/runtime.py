@@ -26,8 +26,8 @@ DEFAULT_ORG_ID = 1
 DEFAULT_THEME = "dark"
 DEFAULT_WIDTH = 900
 DEFAULT_HEIGHT = 320
-DEFAULT_REFRESH_SECONDS = 300
-CACHE_RECORD_VERSION = 1
+DEFAULT_REFRESH_SECONDS = 600
+CACHE_RECORD_VERSION = 2
 
 REQUIRED_QUERY_PARAMS = ("dashboard_uid", "panel_id", "from", "to")
 CACHE_KEY_FIELDS = (
@@ -54,6 +54,7 @@ class CacheEntry:
     expires_at: datetime | None
     fresh_until: datetime
     rendered_at: datetime
+    refresh_seconds: int
     content: bytes
     content_type: str
 
@@ -153,6 +154,18 @@ def build_cache_key(params: Mapping[str, Any]) -> tuple[Any, ...]:
     return tuple(params[name] for name in CACHE_KEY_FIELDS)
 
 
+def build_render_params_from_cache_key(
+    cache_key: tuple[Any, ...], refresh_seconds: int
+) -> dict[str, Any]:
+    """Rebuild render request parameters from a stable cache key."""
+    if len(cache_key) != len(CACHE_KEY_FIELDS):
+        raise ValueError("Invalid cache key")
+
+    params = dict(zip(CACHE_KEY_FIELDS, cache_key, strict=True))
+    params["refresh_seconds"] = _parse_positive_int("refresh_seconds", refresh_seconds)
+    return params
+
+
 def build_cache_entry(
     content: bytes,
     content_type: str,
@@ -166,6 +179,7 @@ def build_cache_entry(
         expires_at=None,
         fresh_until=timestamp + timedelta(seconds=refresh_seconds),
         rendered_at=timestamp,
+        refresh_seconds=_parse_positive_int("refresh_seconds", refresh_seconds),
         content=content,
         content_type=content_type,
     )
@@ -259,6 +273,7 @@ def serialize_cache_entry(cache_key: tuple[Any, ...], entry: CacheEntry) -> dict
         "expires_at": entry.expires_at.isoformat() if entry.expires_at else None,
         "fresh_until": entry.fresh_until.isoformat(),
         "rendered_at": entry.rendered_at.isoformat(),
+        "refresh_seconds": entry.refresh_seconds,
         "content_type": entry.content_type,
         "content_b64": base64.b64encode(entry.content).decode("ascii"),
     }
@@ -266,16 +281,24 @@ def serialize_cache_entry(cache_key: tuple[Any, ...], entry: CacheEntry) -> dict
 
 def deserialize_cache_entry(payload: dict[str, Any]) -> tuple[tuple[Any, ...], CacheEntry]:
     """Deserialize one cache entry from a JSON-safe dict."""
-    if payload.get("version") != CACHE_RECORD_VERSION:
+    if payload.get("version") not in {1, CACHE_RECORD_VERSION}:
         raise ValueError("Unsupported cache record version")
 
     cache_key = tuple(payload["cache_key"])
     expires_at_raw = payload.get("expires_at")
+    rendered_at = datetime.fromisoformat(payload["rendered_at"])
+    fresh_until = datetime.fromisoformat(payload["fresh_until"])
+    refresh_seconds = payload.get("refresh_seconds")
+    if refresh_seconds is None:
+        refresh_seconds = max(
+            1, int((fresh_until - rendered_at).total_seconds())
+        )
 
     return cache_key, CacheEntry(
         expires_at=datetime.fromisoformat(expires_at_raw) if expires_at_raw else None,
-        fresh_until=datetime.fromisoformat(payload["fresh_until"]),
-        rendered_at=datetime.fromisoformat(payload["rendered_at"]),
+        fresh_until=fresh_until,
+        rendered_at=rendered_at,
+        refresh_seconds=_parse_positive_int("refresh_seconds", refresh_seconds),
         content=base64.b64decode(payload["content_b64"], validate=True),
         content_type=str(payload["content_type"]),
     )
